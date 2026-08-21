@@ -8,22 +8,18 @@
 
 ## 安裝與執行方法
 
-如果你是第一次使用，請按照以下步驟安裝必要的環境與依賴套件：
+本專案完全符合 **AI Tool Launcher** 開發規範，支援隨插即用與自動化環境建置。
 
-1. **安裝 Python**
-   如果你還沒有安裝 Python，請至 [Python 官方網站](https://www.python.org/downloads/) 下載並安裝。**安裝時請務必勾選「Add Python to PATH」**。
+1. **一鍵註冊與安裝**
+   將專案下載或 `git clone` 至本地後，直接雙擊執行目錄下的 `linkme.bat`。
+   這會將本工具註冊至你的 AI Tool Launcher 啟動器中。
 
-2. **安裝必備套件**
-   在專案資料夾中開啟終端機 (或命令提示字元)，並執行以下指令來安裝所需的 Python 套件：
-   ```bash
-   pip install -r requirements.txt
-   ```
+2. **啟動程式**
+   打開你的 AI Tool Launcher，在工具清單中找到「**按鍵發話控制器 (PTTApp)**」並點擊啟動。
+   啟動器會**自動幫你安裝** `requirements.txt` 中所需的所有依賴套件（如 `PySide6`, `pycaw`, `pynput` 等），完全不需要手動下達任何 `pip install` 指令！
 
-3. **啟動程式**
-   安裝完成後，直接雙擊專案目錄下的 `start.bat`，或是透過終端機執行：
-   ```bash
-   python main.py
-   ```
+3. **自動更新**
+   當 GitHub 有新版本時，只需在啟動器點擊「🔄 重新拉取」，啟動器即會自動執行更新與環境同步。
 
 ## 功能特色
 - **自訂快捷鍵**：支援組合鍵以及滑鼠按鍵 (如側鍵、中鍵等)。

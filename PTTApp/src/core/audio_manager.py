@@ -24,6 +24,7 @@ class AudioManager:
     def get_capture_apps(self):
         """Returns a list of dicts: {'name': str, 'exe_path': str, 'exe_name': str}"""
         apps = {}
+        ignore_exes = {'svchost.exe', 'audiodg.exe', 'system', 'idle', 'csrss.exe', 'explorer.exe', 'lsass.exe', 'smss.exe'}
         try:
             # Iterate through ALL devices (Playback + Capture) to find all audio apps
             devices = AudioUtilities.GetAllDevices(EDataFlow.eAll.value)
@@ -43,14 +44,19 @@ class AudioManager:
                             if p:
                                 try:
                                     exe_path = p.exe()
+                                    exe_name = p.name().lower()
                                 except Exception:
                                     continue
+                                
+                                if exe_name in ignore_exes:
+                                    continue
+                                    
                                 if exe_path not in apps:
                                     desc = self.get_file_description(exe_path)
                                     apps[exe_path] = {
                                         'name': desc,
                                         'exe_path': exe_path,
-                                        'exe_name': p.name().lower()
+                                        'exe_name': exe_name
                                     }
                 except Exception:
                     continue

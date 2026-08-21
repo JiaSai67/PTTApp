@@ -111,7 +111,8 @@ class AppItemWidget(QWidget):
         
         layout = QHBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
-        
+        self.setStyleSheet("background-color: #2B2B2B; color: #FFFFFF; border-radius: 5px;")
+
         # Checkbox
         self.checkbox = QCheckBox()
         layout.addWidget(self.checkbox)
@@ -153,7 +154,35 @@ class MainWindow(QMainWindow):
         self.refresh_apps()
 
     def init_ui(self):
+        self.setStyleSheet("""
+            QMainWindow, QWidget#central {
+                background-color: #222222;
+                color: #FFFFFF;
+            }
+            QLabel, QCheckBox, QRadioButton {
+                color: #FFFFFF;
+                background: transparent;
+            }
+            QScrollArea {
+                background-color: #222222;
+                border: none;
+            }
+            QWidget#scroll_content {
+                background-color: #222222;
+            }
+            QPushButton {
+                background-color: #2B2B2B;
+                color: #FFFFFF;
+                border: 1px solid #444444;
+                padding: 5px;
+                border-radius: 3px;
+            }
+            QPushButton:hover {
+                background-color: #3B3B3B;
+            }
+        """)
         central = QWidget()
+        central.setObjectName("central")
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
 

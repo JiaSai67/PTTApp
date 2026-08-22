@@ -195,20 +195,6 @@ class StudioOneEngine(BaseAudioEngine):
                 if 'loopMIDI' in p:
                     self.outport = mido.open_output(p)
                     return True
-        except ImportError:
-            # Auto install dependencies if missing
-            import subprocess
-            import sys
-            subprocess.call([sys.executable, "-m", "pip", "install", "mido", "python-rtmidi"])
-            try:
-                import mido
-                ports = mido.get_output_names()
-                for p in ports:
-                    if 'loopMIDI' in p:
-                        self.outport = mido.open_output(p)
-                        return True
-            except:
-                pass
         except Exception as e:
             pass
         return False

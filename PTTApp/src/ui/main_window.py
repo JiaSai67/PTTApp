@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QLabel, QScrollArea, QCheckBox, 
                              QMessageBox, QApplication, QFileIconProvider,
                              QRadioButton, QButtonGroup, QComboBox)
-from PySide6.QtCore import Qt, QThread, Signal, QFileInfo
+from PySide6.QtCore import Qt, QThread, Signal, QFileInfo, QTimer
 from PySide6.QtGui import QIcon, QFont
 from pynput import keyboard, mouse
 
@@ -158,6 +158,10 @@ class MainWindow(QMainWindow):
         self.app_widgets = []
         self.listener_thread = None
         self.mover_thread = None
+        
+        self.midi_check_timer = QTimer(self)
+        self.midi_check_timer.timeout.connect(self.check_midi_status_poll)
+        self.expected_midi_state = None
         
         self.init_ui()
         self.refresh_apps()
@@ -434,6 +438,23 @@ class MainWindow(QMainWindow):
             self.config.set('selected_apps', saved)
             self.refresh_apps()
 
+    def check_midi_status_poll(self):
+        if self.config.get('engine_type') != 'studioone':
+            self.midi_check_timer.stop()
+            return
+            
+        struct = self.audio_manager.get_structure()
+        current_state = struct.get('installed', False)
+        
+        if self.expected_midi_state is not None and current_state == self.expected_midi_state:
+            self.midi_check_timer.stop()
+            self.refresh_apps()
+            if current_state:
+                QMessageBox.information(self, "成功", "偵測到 loopMIDI 驅動已成功安裝！\n現在可以開始綁定訊號了。")
+            else:
+                QMessageBox.information(self, "成功", "loopMIDI 已成功解除安裝。")
+            self.expected_midi_state = None
+
     def handle_midi_action(self):
         import os
         import subprocess
@@ -444,12 +465,16 @@ class MainWindow(QMainWindow):
             installer_path = os.path.join(project_root, 'resources', 'loopMIDISetup.exe')
             if os.path.exists(installer_path):
                 os.startfile(installer_path)
+                self.expected_midi_state = True
+                self.midi_check_timer.start(1000)
             else:
                 QMessageBox.warning(self, "錯誤", f"找不到安裝檔，尋找路徑為: {installer_path}")
         else:
             # Uninstall mode (open appwiz.cpl)
-            QMessageBox.information(self, "提示", "請在即將開啟的視窗中找到「loopMIDI」，點擊解除安裝。")
+            QMessageBox.information(self, "提示", "請在即將開啟的視窗中找到「loopMIDI」，點擊解除安裝。\n程式會在背景自動偵測解除安裝進度。")
             subprocess.Popen("appwiz.cpl", shell=True)
+            self.expected_midi_state = False
+            self.midi_check_timer.start(1000)
 
     def save_mode(self):
         mode = 'ptt' if self.mode_ptt_radio.isChecked() else 'toggle'

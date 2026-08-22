@@ -2,7 +2,8 @@ import sys
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QScrollArea, QCheckBox, 
                              QMessageBox, QApplication, QFileIconProvider,
-                             QRadioButton, QButtonGroup, QComboBox)
+                             QRadioButton, QButtonGroup, QComboBox,
+                             QDialog, QFormLayout, QLineEdit)
 from PySide6.QtCore import Qt, QThread, Signal, QFileInfo, QTimer
 from PySide6.QtGui import QIcon, QFont
 from pynput import keyboard, mouse
@@ -109,32 +110,14 @@ class MidiSignalDialog(QDialog):
     def __init__(self, parent=None, signal_data=None):
         super().__init__(parent)
         self.setWindowTitle("新增/編輯 MIDI 訊號")
-        self.setFixedSize(350, 250)
+        self.setFixedSize(300, 120)
         self.signal_data = signal_data or {}
         
         layout = QVBoxLayout(self)
         
         form_layout = QFormLayout()
-        
-        self.name_input = QLineEdit(self.signal_data.get('name', '新建訊號'))
-        form_layout.addRow("名稱:", self.name_input)
-        
-        self.type_combo = QComboBox()
-        self.type_combo.addItems(["CC (Control Change)", "Note (音符)"])
-        if self.signal_data.get('type') == 'note':
-            self.type_combo.setCurrentIndex(1)
-        form_layout.addRow("類型:", self.type_combo)
-        
-        self.channel_spin = QSpinBox()
-        self.channel_spin.setRange(1, 16)
-        self.channel_spin.setValue(self.signal_data.get('channel', 0) + 1)
-        form_layout.addRow("通道 (1-16):", self.channel_spin)
-        
-        self.val_spin = QSpinBox()
-        self.val_spin.setRange(0, 127)
-        self.val_spin.setValue(self.signal_data.get('value', 14))
-        form_layout.addRow("控制碼/音符號碼:", self.val_spin)
-        
+        self.name_input = QLineEdit(self.signal_data.get('name', '新建功能'))
+        form_layout.addRow("功能名稱:", self.name_input)
         layout.addLayout(form_layout)
         
         btn_layout = QHBoxLayout()
@@ -149,14 +132,22 @@ class MidiSignalDialog(QDialog):
         
     def get_data(self):
         import uuid
-        return {
+        name = self.name_input.text().strip()
+        if not name:
+            name = "未命名功能"
+            
+        data = {
             'id': self.signal_data.get('id', str(uuid.uuid4())),
-            'name': self.name_input.text(),
-            'type': 'note' if self.type_combo.currentIndex() == 1 else 'cc',
-            'channel': self.channel_spin.value() - 1,
-            'value': self.val_spin.value(),
+            'name': name,
             'enabled': self.signal_data.get('enabled', True)
         }
+        
+        if 'type' in self.signal_data:
+            data['type'] = self.signal_data['type']
+            data['channel'] = self.signal_data['channel']
+            data['value'] = self.signal_data['value']
+            
+        return data
 
 class MidiSignalWidget(QWidget):
     def __init__(self, signal_data):
@@ -168,12 +159,11 @@ class MidiSignalWidget(QWidget):
         self.checkbox = QCheckBox()
         self.checkbox.setChecked(signal_data.get('enabled', True))
         
-        type_str = "Note" if signal_data.get('type') == 'note' else "CC"
-        lbl_text = f"{signal_data.get('name', '')} ({type_str} {signal_data.get('value', 0)} / CH {signal_data.get('channel', 0)+1})"
+        lbl_text = f"{signal_data.get('name', '')} (發射代碼: CC {signal_data.get('value', 0)})"
         self.name_lbl = QLabel(lbl_text)
         
-        self.edit_btn = QPushButton("✏️ 編輯")
-        self.edit_btn.setFixedSize(70, 30)
+        self.edit_btn = QPushButton("✏️ 編輯名稱")
+        self.edit_btn.setFixedSize(90, 30)
         self.delete_btn = QPushButton("🗑️ 刪除")
         self.delete_btn.setFixedSize(70, 30)
         colors = get_theme_colors()
@@ -628,6 +618,17 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.Accepted:
             new_sig = dialog.get_data()
             signals = self.config.get('midi_signals', [])
+            
+            # Auto-assign unique CC value
+            used_vals = [s.get('value', 0) for s in signals if s.get('type', 'cc') == 'cc']
+            next_val = 14
+            while next_val in used_vals:
+                next_val += 1
+                
+            new_sig['type'] = 'cc'
+            new_sig['channel'] = 0
+            new_sig['value'] = next_val
+            
             signals.append(new_sig)
             self.config.set('midi_signals', signals)
             self.refresh_apps()

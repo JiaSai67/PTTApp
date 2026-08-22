@@ -344,9 +344,9 @@ class MainWindow(QMainWindow):
                 self.midi_action_btn.setText("🗑️ 解除安裝 loopMIDI")
                 self.midi_action_btn.setStyleSheet(f"background-color: {colors.error_bg}; color: white; border: none;")
             elif self.midi_status == 'no_port':
-                self.midi_status_lbl.setText("⚠️ 請開啟 loopMIDI 並點擊左下角 [+] 新增 Port")
+                self.midi_status_lbl.setText("⚠️ 已經安裝 loopMIDI！\n請點擊下方按鈕開啟它，並按左下角的 [+] 新增虛擬線")
                 self.midi_status_lbl.setStyleSheet(f"color: #FFA500;") # Orange
-                self.midi_action_btn.setText("🚀 開啟 loopMIDI 介面")
+                self.midi_action_btn.setText("🚀 第一步：開啟 loopMIDI 介面")
                 self.midi_action_btn.setStyleSheet(f"background-color: #0078D4; color: white; border: none;")
             else:
                 self.midi_status_lbl.setText("❌ 尚未安裝 loopMIDI 驅動")
@@ -459,7 +459,7 @@ class MainWindow(QMainWindow):
             if current_status == 'ready':
                 QMessageBox.information(self, "成功", "偵測到 loopMIDI 虛擬線已成功連接！\n現在可以開始綁定訊號了。")
             elif current_status == 'no_port':
-                QMessageBox.information(self, "提示", "loopMIDI 已經啟動，但還沒有建立虛擬線。\n請在 loopMIDI 視窗左下角點擊 [+] 號。")
+                QMessageBox.information(self, "提示", "loopMIDI 驅動已經就緒！\n\n接下來請在彈出的 loopMIDI 視窗中：\n1. 點擊左下角的 [+] 號\n2. 看到清單出現 loopMIDI Port 即可！")
                 self.expected_midi_state = 'ready' # Wait for port
                 self.midi_check_timer.start(1000)
             else:
@@ -486,7 +486,6 @@ class MainWindow(QMainWindow):
             else:
                 QMessageBox.warning(self, "錯誤", f"找不到安裝檔，尋找路徑為: {installer_path}")
         elif self.midi_status == 'no_port':
-            # Launch loopMIDI app
             loopmidi_path = r"C:\Program Files (x86)\Tobias Erichsen\loopMIDI\loopMIDI.exe"
             if os.path.exists(loopmidi_path):
                 subprocess.Popen(loopmidi_path, shell=True)

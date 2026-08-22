@@ -195,21 +195,6 @@ class StudioOneEngine(BaseAudioEngine):
                 if 'loopMIDI' in p:
                     self.outport = mido.open_output(p)
                     return True
-                    
-            # Port not found, check if it's installed but not running
-            import os
-            import subprocess
-            loopmidi_path = r"C:\Program Files (x86)\Tobias Erichsen\loopMIDI\loopMIDI.exe"
-            if os.path.exists(loopmidi_path):
-                # Try to launch it in the background
-                subprocess.Popen(loopmidi_path, shell=True)
-                import time
-                time.sleep(1.0) # Give it a moment to create the port
-                ports = mido.get_output_names()
-                for p in ports:
-                    if 'loopMIDI' in p:
-                        self.outport = mido.open_output(p)
-                        return True
         except Exception as e:
             pass
         return False

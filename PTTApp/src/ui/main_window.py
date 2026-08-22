@@ -154,24 +154,46 @@ class MidiSignalWidget(QWidget):
         super().__init__()
         self.signal_data = signal_data
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 5, 10, 5)
+        layout.setContentsMargins(15, 10, 15, 10)
+        
+        colors = get_theme_colors()
+        self.setStyleSheet(f"background-color: {colors.bg_card}; color: {colors.text_main}; border-radius: 8px;")
         
         self.checkbox = QCheckBox()
         self.checkbox.setChecked(signal_data.get('enabled', True))
+        # Increase checkbox hit area and scale
+        self.checkbox.setStyleSheet("""
+            QCheckBox::indicator {
+                width: 22px;
+                height: 22px;
+                border: 2px solid #555;
+                border-radius: 4px;
+                background-color: #333;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #0078D4;
+                border: 2px solid #0078D4;
+                image: url(check.png); /* Native check handles it normally if empty, but let's just color it */
+            }
+        """)
         
-        lbl_text = f"{signal_data.get('name', '')} (發射代碼: CC {signal_data.get('value', 0)})"
+        lbl_text = f"{signal_data.get('name', '')}  (內部代碼: CC {signal_data.get('value', 0)})"
         self.name_lbl = QLabel(lbl_text)
+        self.name_lbl.setFont(get_font(11, bold=True))
         
         self.edit_btn = QPushButton("✏️ 編輯名稱")
-        self.edit_btn.setFixedSize(90, 30)
+        self.edit_btn.setFixedSize(95, 34)
+        self.edit_btn.setStyleSheet(f"background-color: #444; color: white; border: none; border-radius: 4px;")
+        
         self.delete_btn = QPushButton("🗑️ 刪除")
-        self.delete_btn.setFixedSize(70, 30)
-        colors = get_theme_colors()
-        self.delete_btn.setStyleSheet(f"background-color: {colors.error_bg}; color: white; border: none;")
+        self.delete_btn.setFixedSize(70, 34)
+        self.delete_btn.setStyleSheet(f"background-color: {colors.error_bg}; color: white; border: none; border-radius: 4px;")
         
         layout.addWidget(self.checkbox)
+        layout.addSpacing(10)
         layout.addWidget(self.name_lbl, stretch=1)
         layout.addWidget(self.edit_btn)
+        layout.addSpacing(5)
         layout.addWidget(self.delete_btn)
 
 class AppItemWidget(QWidget):

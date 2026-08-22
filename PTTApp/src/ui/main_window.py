@@ -156,7 +156,6 @@ class MainWindow(QMainWindow):
         self.refresh_apps()
 
     def init_ui(self):
-        self.colors = get_theme_colors()
         self.setStyleSheet(get_main_stylesheet())
         central = QWidget()
         central.setObjectName("central")
@@ -219,7 +218,8 @@ class MainWindow(QMainWindow):
         self.cancel_hotkey_btn = QPushButton("取消綁定")
         self.cancel_hotkey_btn.clicked.connect(self.cancel_hotkey_listen)
         self.cancel_hotkey_btn.hide()
-        self.cancel_hotkey_btn.setStyleSheet(f"background-color: {self.colors.error_bg}; color: white; border: none; padding: 5px;")
+        colors = get_theme_colors()
+        self.cancel_hotkey_btn.setStyleSheet(f"background-color: {colors.error_bg}; color: white; border: none; padding: 5px;")
         
         self.adjust_icon_btn = QPushButton("調整圖標位置")
         self.adjust_icon_btn.clicked.connect(self.start_icon_adjustment)
@@ -233,7 +233,8 @@ class MainWindow(QMainWindow):
         # Start/Stop
         self.start_btn = QPushButton("▶ 啟動 PTT")
         self.start_btn.setFont(get_font(12, bold=True))
-        self.start_btn.setStyleSheet(f"background-color: {self.colors.success_bg}; color: white; border: none;")
+        colors = get_theme_colors()
+        self.start_btn.setStyleSheet(f"background-color: {colors.success_bg}; color: white; border: none;")
         self.start_btn.clicked.connect(self.toggle_ptt)
         self.start_btn.setFixedHeight(40)
         main_layout.addWidget(self.start_btn)
@@ -327,11 +328,12 @@ class MainWindow(QMainWindow):
         self.cancel_hotkey_listen()
 
     def toggle_ptt(self):
+        colors = get_theme_colors()
         if self.ptt_worker.is_running:
             self.ptt_worker.stop()
             self.overlay.hide()
             self.start_btn.setText("▶ 啟動 PTT")
-            self.start_btn.setStyleSheet(f"background-color: {self.colors.success_bg}; color: white; border: none;")
+            self.start_btn.setStyleSheet(f"background-color: {colors.success_bg}; color: white; border: none;")
             self.set_ui_enabled(True)
         else:
             if not self.hotkey:
@@ -351,7 +353,7 @@ class MainWindow(QMainWindow):
             if self.ptt_worker.start(self.hotkey, selected_devices, mode):
                 self.overlay.show()
                 self.start_btn.setText("⏹ 停止 PTT")
-                self.start_btn.setStyleSheet(f"background-color: {self.colors.error_bg}; color: white; border: none;")
+                self.start_btn.setStyleSheet(f"background-color: {colors.error_bg}; color: white; border: none;")
                 self.set_ui_enabled(False)
             else:
                 QMessageBox.warning(self, "錯誤", "啟動失敗！")

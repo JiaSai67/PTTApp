@@ -178,11 +178,14 @@ class MainWindow(QMainWindow):
         self.engine_combo.setFont(get_font(10))
         self.engine_combo.addItems([
             "Windows 系統麥克風 (目前模式)",
-            "Voicemeeter 路由控制"
+            "Voicemeeter 路由控制",
+            "Studio One (MIDI 模式)"
         ])
         saved_engine = self.config.get('engine_type') or 'windows'
         if saved_engine == 'voicemeeter':
             self.engine_combo.setCurrentIndex(1)
+        elif saved_engine == 'studioone':
+            self.engine_combo.setCurrentIndex(2)
         self.audio_manager.set_engine(saved_engine)
         self.engine_combo.currentIndexChanged.connect(self.on_engine_changed)
         
@@ -208,6 +211,25 @@ class MainWindow(QMainWindow):
         matrix_layout.addWidget(self.matrix_add_btn)
         self.matrix_frame.hide()
         main_layout.addWidget(self.matrix_frame)
+        
+        # MIDI Controls (hidden by default, shown for Studio One)
+        self.midi_frame = QWidget()
+        midi_layout = QVBoxLayout(self.midi_frame)
+        midi_layout.setAlignment(Qt.AlignCenter)
+        
+        self.midi_status_lbl = QLabel()
+        self.midi_status_lbl.setFont(get_font(12, bold=True))
+        self.midi_status_lbl.setAlignment(Qt.AlignCenter)
+        
+        self.midi_action_btn = QPushButton()
+        self.midi_action_btn.setFont(get_font(10, bold=True))
+        self.midi_action_btn.setFixedSize(250, 40)
+        self.midi_action_btn.clicked.connect(self.handle_midi_action)
+        
+        midi_layout.addWidget(self.midi_status_lbl)
+        midi_layout.addWidget(self.midi_action_btn, alignment=Qt.AlignCenter)
+        self.midi_frame.hide()
+        main_layout.addWidget(self.midi_frame)
 
         # Apps List
         self.scroll_area = QScrollArea()
@@ -282,7 +304,13 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.start_btn)
 
     def on_engine_changed(self, index):
-        engine_type = 'voicemeeter' if index == 1 else 'windows'
+        if index == 1:
+            engine_type = 'voicemeeter'
+        elif index == 2:
+            engine_type = 'studioone'
+        else:
+            engine_type = 'windows'
+            
         self.config.set('engine_type', engine_type)
         self.audio_manager.set_engine(engine_type)
         self.refresh_apps()
@@ -296,9 +324,31 @@ class MainWindow(QMainWindow):
 
         struct = self.audio_manager.get_structure()
         
-        if struct['type'] == 'matrix':
+        if struct['type'] == 'midi':
+            self.matrix_frame.hide()
+            self.refresh_btn.hide()
+            self.scroll_area.hide()
+            self.midi_frame.show()
+            
+            colors = get_theme_colors()
+            
+            self.is_midi_installed = struct.get('installed', False)
+            if self.is_midi_installed:
+                self.midi_status_lbl.setText("✅ loopMIDI 驅動已就緒")
+                self.midi_status_lbl.setStyleSheet(f"color: {colors.success};")
+                self.midi_action_btn.setText("🗑️ 解除安裝 loopMIDI")
+                self.midi_action_btn.setStyleSheet(f"background-color: {colors.error_bg}; color: white; border: none;")
+            else:
+                self.midi_status_lbl.setText("❌ 尚未安裝 loopMIDI 驅動")
+                self.midi_status_lbl.setStyleSheet(f"color: {colors.error};")
+                self.midi_action_btn.setText("📥 一鍵安裝 loopMIDI")
+                self.midi_action_btn.setStyleSheet(f"background-color: {colors.select_bg}; color: white; border: none;")
+                
+        elif struct['type'] == 'matrix':
             self.matrix_frame.show()
             self.refresh_btn.hide()
+            self.midi_frame.hide()
+            self.scroll_area.show()
             
             # Update comboboxes
             self.matrix_in_combo.clear()
@@ -343,7 +393,9 @@ class MainWindow(QMainWindow):
                         
         else:
             self.matrix_frame.hide()
+            self.midi_frame.hide()
             self.refresh_btn.show()
+            self.scroll_area.show()
             
             devices = struct.get('items', [])
             if not devices:
@@ -381,6 +433,22 @@ class MainWindow(QMainWindow):
             saved.remove(route_id)
             self.config.set('selected_apps', saved)
             self.refresh_apps()
+
+    def handle_midi_action(self):
+        import os
+        import subprocess
+        
+        if not self.is_midi_installed:
+            # Install mode
+            installer_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'resources', 'loopMIDISetup.exe')
+            if os.path.exists(installer_path):
+                os.startfile(installer_path)
+            else:
+                QMessageBox.warning(self, "錯誤", "找不到安裝檔，請確認 resources/loopMIDISetup.exe 是否存在！")
+        else:
+            # Uninstall mode (open appwiz.cpl)
+            QMessageBox.information(self, "提示", "請在即將開啟的視窗中找到「loopMIDI」，點擊解除安裝。")
+            subprocess.Popen("appwiz.cpl", shell=True)
 
     def save_mode(self):
         mode = 'ptt' if self.mode_ptt_radio.isChecked() else 'toggle'

@@ -180,12 +180,37 @@ class VoicemeeterEngine(BaseAudioEngine):
                 pass
 
 
+class StudioOneEngine(BaseAudioEngine):
+    def get_structure(self):
+        # Check if loopMIDI is installed
+        installed = False
+        try:
+            import mido
+            # Get all available MIDI output ports
+            ports = mido.get_output_names()
+            for p in ports:
+                if 'loopMIDI' in p:
+                    installed = True
+                    break
+        except ImportError:
+            pass # Library not installed yet
+            
+        return {'type': 'midi', 'installed': installed}
+
+    def set_mute(self, target_ids, mute: bool):
+        pass # To be implemented later
+
+    def cleanup(self):
+        pass
+
+
 class AudioManager:
     def __init__(self):
         self.engine_type = 'windows'
         self.engines = {
             'windows': WindowsAudioEngine(),
-            'voicemeeter': VoicemeeterEngine()
+            'voicemeeter': VoicemeeterEngine(),
+            'studioone': StudioOneEngine()
         }
 
     def set_engine(self, engine_type):

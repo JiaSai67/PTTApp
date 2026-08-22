@@ -66,6 +66,7 @@ class AudioManager:
 
     def set_mute_for_apps(self, target_exe_names, mute: bool):
         """Mutes or unmutes the specified list of executable names for ALL capture devices."""
+        ignore_exes = {'svchost.exe', 'audiodg.exe', 'system', 'idle', 'csrss.exe', 'explorer.exe', 'lsass.exe', 'smss.exe'}
         try:
             # Only affect Capture devices (microphones/inputs)
             devices = AudioUtilities.GetAllDevices(EDataFlow.eCapture.value)
@@ -85,6 +86,9 @@ class AudioManager:
                                 try:
                                     exe_name = session.Process.name().lower()
                                 except Exception:
+                                    continue
+                                
+                                if exe_name in ignore_exes:
                                     continue
                                     
                                 if exe_name in target_exe_names:

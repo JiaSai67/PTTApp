@@ -181,27 +181,57 @@ class VoicemeeterEngine(BaseAudioEngine):
 
 
 class StudioOneEngine(BaseAudioEngine):
-    def get_structure(self):
-        # Check if loopMIDI is installed
-        installed = False
+    def __init__(self):
+        self.outport = None
+        self._init_port()
+
+    def _init_port(self):
+        if self.outport is not None:
+            return True
         try:
             import mido
-            # Get all available MIDI output ports
             ports = mido.get_output_names()
             for p in ports:
                 if 'loopMIDI' in p:
-                    installed = True
-                    break
-        except ImportError:
-            pass # Library not installed yet
-            
+                    self.outport = mido.open_output(p)
+                    return True
+        except Exception as e:
+            pass
+        return False
+
+    def get_structure(self):
+        # We can re-check the port to see if it's available
+        installed = self._init_port()
         return {'type': 'midi', 'installed': installed}
 
     def set_mute(self, target_ids, mute: bool):
-        pass # To be implemented later
+        if not self._init_port():
+            return
+            
+        try:
+            import mido
+            # 傳送 CC 控制碼 (Channel 1, CC 14)
+            # mute=True (按鍵按下) 傳送數值 127，mute=False (按鍵放開) 傳送數值 0
+            val = 127 if mute else 0
+            cc_msg = mido.Message('control_change', channel=0, control=14, value=val)
+            self.outport.send(cc_msg)
+            
+            # 同時傳送一個 Note 訊號 (Channel 1, Note 60)，確保任何綁定方式都能吃得到
+            note_type = 'note_on' if mute else 'note_off'
+            vel = 127 if mute else 0
+            note_msg = mido.Message(note_type, channel=0, note=60, velocity=vel)
+            self.outport.send(note_msg)
+            
+        except Exception as e:
+            pass
 
     def cleanup(self):
-        pass
+        if self.outport:
+            try:
+                self.outport.close()
+            except:
+                pass
+            self.outport = None
 
 
 class AudioManager:

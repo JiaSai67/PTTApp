@@ -25,7 +25,9 @@ class AudioManager:
             devices = AudioUtilities.GetAllDevices(EDataFlow.eCapture.value)
             for dev in devices:
                 try:
-                    if getattr(dev, 'state', 0) != 1: continue
+                    state = getattr(dev, 'state', None)
+                    if not state or str(state) != "AudioDeviceState.Active": 
+                        continue
                     vol = dev.EndpointVolume
                     if vol:
                         devices_info.append({
@@ -42,7 +44,9 @@ class AudioManager:
         try:
             devices = AudioUtilities.GetAllDevices(EDataFlow.eCapture.value)
             for dev in devices:
-                if getattr(dev, 'state', 0) != 1: continue
+                state = getattr(dev, 'state', None)
+                if not state or str(state) != "AudioDeviceState.Active": 
+                    continue
                 if dev.id in target_ids:
                     try:
                         vol = dev.EndpointVolume

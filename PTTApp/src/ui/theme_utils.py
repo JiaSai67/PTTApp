@@ -59,15 +59,18 @@ def get_main_stylesheet():
         QWidget#scroll_content {{
             background-color: {colors.bg_root};
         }}
-        QPushButton {{
+        QPushButton, QComboBox {{
             background-color: {colors.bg_card};
             color: {colors.text_main};
             border: 1px solid {colors.border};
             padding: 5px;
             border-radius: 3px;
         }}
-        QPushButton:hover {{
+        QPushButton:hover, QComboBox:hover {{
             background-color: {colors.bg_card_hover};
+        }}
+        QComboBox::drop-down {{
+            border: none;
         }}
     """
 

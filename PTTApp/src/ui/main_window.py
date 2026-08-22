@@ -2,7 +2,7 @@ import sys
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QScrollArea, QCheckBox, 
                              QMessageBox, QApplication, QFileIconProvider,
-                             QRadioButton, QButtonGroup)
+                             QRadioButton, QButtonGroup, QComboBox)
 from PySide6.QtCore import Qt, QThread, Signal, QFileInfo
 from PySide6.QtGui import QIcon, QFont
 from pynput import keyboard, mouse
@@ -163,9 +163,26 @@ class MainWindow(QMainWindow):
         main_layout = QVBoxLayout(central)
 
         # Header
-        header_lbl = QLabel("🎤 選擇要控制靜音的麥克風 / 輸入裝置")
+        header_layout = QHBoxLayout()
+        header_lbl = QLabel("🎤 靜音控制目標:")
         header_lbl.setFont(get_font(12, bold=True))
-        main_layout.addWidget(header_lbl)
+        
+        self.engine_combo = QComboBox()
+        self.engine_combo.setFont(get_font(10))
+        self.engine_combo.addItems([
+            "Windows 系統麥克風 (目前模式)",
+            "Voicemeeter 路由控制"
+        ])
+        saved_engine = self.config.get('engine_type') or 'windows'
+        if saved_engine == 'voicemeeter':
+            self.engine_combo.setCurrentIndex(1)
+        self.audio_manager.set_engine(saved_engine)
+        self.engine_combo.currentIndexChanged.connect(self.on_engine_changed)
+        
+        header_layout.addWidget(header_lbl)
+        header_layout.addWidget(self.engine_combo)
+        header_layout.addStretch()
+        main_layout.addLayout(header_layout)
 
         # Apps List
         self.scroll_area = QScrollArea()
@@ -238,6 +255,12 @@ class MainWindow(QMainWindow):
         self.start_btn.clicked.connect(self.toggle_ptt)
         self.start_btn.setFixedHeight(40)
         main_layout.addWidget(self.start_btn)
+
+    def on_engine_changed(self, index):
+        engine_type = 'voicemeeter' if index == 1 else 'windows'
+        self.config.set('engine_type', engine_type)
+        self.audio_manager.set_engine(engine_type)
+        self.refresh_apps()
 
     def refresh_apps(self):
         # Clear old
@@ -378,4 +401,5 @@ class MainWindow(QMainWindow):
         if self.mover_thread:
             self.mover_thread.cancel()
         self.overlay.close()
+        self.audio_manager.cleanup()
         super().closeEvent(event)

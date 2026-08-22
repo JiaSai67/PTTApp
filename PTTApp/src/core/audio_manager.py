@@ -217,17 +217,20 @@ class StudioOneEngine(BaseAudioEngine):
             
         try:
             import mido
-            # 傳送 CC 控制碼 (Channel 1, CC 14)
-            # mute=True (按鍵按下) 傳送數值 127，mute=False (按鍵放開) 傳送數值 0
-            val = 127 if mute else 0
-            cc_msg = mido.Message('control_change', channel=0, control=14, value=val)
-            self.outport.send(cc_msg)
-            
-            # 同時傳送一個 Note 訊號 (Channel 1, Note 60)，確保任何綁定方式都能吃得到
-            note_type = 'note_on' if mute else 'note_off'
-            vel = 127 if mute else 0
-            note_msg = mido.Message(note_type, channel=0, note=60, velocity=vel)
-            self.outport.send(note_msg)
+            for sig in target_ids:
+                if not isinstance(sig, dict):
+                    continue
+                
+                channel = sig.get('channel', 0)
+                val = sig.get('value', 14)
+                if sig.get('type') == 'note':
+                    note_type = 'note_on' if mute else 'note_off'
+                    vel = 127 if mute else 0
+                    msg = mido.Message(note_type, channel=channel, note=val, velocity=vel)
+                else:
+                    v = 127 if mute else 0
+                    msg = mido.Message('control_change', channel=channel, control=val, value=v)
+                self.outport.send(msg)
             
         except Exception as e:
             pass

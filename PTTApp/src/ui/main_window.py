@@ -105,6 +105,85 @@ class IconMoverThread(QThread):
 
 
 
+class MidiSignalDialog(QDialog):
+    def __init__(self, parent=None, signal_data=None):
+        super().__init__(parent)
+        self.setWindowTitle("新增/編輯 MIDI 訊號")
+        self.setFixedSize(350, 250)
+        self.signal_data = signal_data or {}
+        
+        layout = QVBoxLayout(self)
+        
+        form_layout = QFormLayout()
+        
+        self.name_input = QLineEdit(self.signal_data.get('name', '新建訊號'))
+        form_layout.addRow("名稱:", self.name_input)
+        
+        self.type_combo = QComboBox()
+        self.type_combo.addItems(["CC (Control Change)", "Note (音符)"])
+        if self.signal_data.get('type') == 'note':
+            self.type_combo.setCurrentIndex(1)
+        form_layout.addRow("類型:", self.type_combo)
+        
+        self.channel_spin = QSpinBox()
+        self.channel_spin.setRange(1, 16)
+        self.channel_spin.setValue(self.signal_data.get('channel', 0) + 1)
+        form_layout.addRow("通道 (1-16):", self.channel_spin)
+        
+        self.val_spin = QSpinBox()
+        self.val_spin.setRange(0, 127)
+        self.val_spin.setValue(self.signal_data.get('value', 14))
+        form_layout.addRow("控制碼/音符號碼:", self.val_spin)
+        
+        layout.addLayout(form_layout)
+        
+        btn_layout = QHBoxLayout()
+        save_btn = QPushButton("儲存")
+        save_btn.clicked.connect(self.accept)
+        cancel_btn = QPushButton("取消")
+        cancel_btn.clicked.connect(self.reject)
+        
+        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+        
+    def get_data(self):
+        import uuid
+        return {
+            'id': self.signal_data.get('id', str(uuid.uuid4())),
+            'name': self.name_input.text(),
+            'type': 'note' if self.type_combo.currentIndex() == 1 else 'cc',
+            'channel': self.channel_spin.value() - 1,
+            'value': self.val_spin.value(),
+            'enabled': self.signal_data.get('enabled', True)
+        }
+
+class MidiSignalWidget(QWidget):
+    def __init__(self, signal_data):
+        super().__init__()
+        self.signal_data = signal_data
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 5, 10, 5)
+        
+        self.checkbox = QCheckBox()
+        self.checkbox.setChecked(signal_data.get('enabled', True))
+        
+        type_str = "Note" if signal_data.get('type') == 'note' else "CC"
+        lbl_text = f"{signal_data.get('name', '')} ({type_str} {signal_data.get('value', 0)} / CH {signal_data.get('channel', 0)+1})"
+        self.name_lbl = QLabel(lbl_text)
+        
+        self.edit_btn = QPushButton("✏️ 編輯")
+        self.edit_btn.setFixedSize(70, 30)
+        self.delete_btn = QPushButton("🗑️ 刪除")
+        self.delete_btn.setFixedSize(70, 30)
+        colors = get_theme_colors()
+        self.delete_btn.setStyleSheet(f"background-color: {colors.error_bg}; color: white; border: none;")
+        
+        layout.addWidget(self.checkbox)
+        layout.addWidget(self.name_lbl, stretch=1)
+        layout.addWidget(self.edit_btn)
+        layout.addWidget(self.delete_btn)
+
 class AppItemWidget(QWidget):
     def __init__(self, app_info):
         super().__init__()
@@ -230,8 +309,12 @@ class MainWindow(QMainWindow):
         self.midi_action_btn.setFixedSize(250, 40)
         self.midi_action_btn.clicked.connect(self.handle_midi_action)
         
+        self.midi_add_btn = QPushButton("➕ 新增 MIDI 訊號")
+        self.midi_add_btn.clicked.connect(self.add_midi_signal)
+        
         midi_layout.addWidget(self.midi_status_lbl)
         midi_layout.addWidget(self.midi_action_btn, alignment=Qt.AlignCenter)
+        midi_layout.addWidget(self.midi_add_btn, alignment=Qt.AlignCenter)
         self.midi_frame.hide()
         main_layout.addWidget(self.midi_frame)
 
@@ -331,7 +414,7 @@ class MainWindow(QMainWindow):
         if struct['type'] == 'midi':
             self.matrix_frame.hide()
             self.refresh_btn.hide()
-            self.scroll_area.hide()
+            self.scroll_area.show()
             self.midi_frame.show()
             
             colors = get_theme_colors()
@@ -343,16 +426,35 @@ class MainWindow(QMainWindow):
                 self.midi_status_lbl.setStyleSheet(f"color: {colors.success};")
                 self.midi_action_btn.setText("🗑️ 解除安裝 loopMIDI")
                 self.midi_action_btn.setStyleSheet(f"background-color: {colors.error_bg}; color: white; border: none;")
+                self.midi_add_btn.show()
             elif self.midi_status == 'no_port':
                 self.midi_status_lbl.setText("⚠️ 已經安裝 loopMIDI！\n請點擊下方按鈕開啟它，並按左下角的 [+] 新增虛擬線")
                 self.midi_status_lbl.setStyleSheet(f"color: #FFA500;") # Orange
                 self.midi_action_btn.setText("🚀 第一步：開啟 loopMIDI 介面")
                 self.midi_action_btn.setStyleSheet(f"background-color: #0078D4; color: white; border: none;")
+                self.midi_add_btn.hide()
             else:
                 self.midi_status_lbl.setText("❌ 尚未安裝 loopMIDI 驅動")
                 self.midi_status_lbl.setStyleSheet(f"color: {colors.error};")
                 self.midi_action_btn.setText("📥 一鍵安裝 loopMIDI")
                 self.midi_action_btn.setStyleSheet(f"background-color: #0078D4; color: white; border: none;")
+                self.midi_add_btn.hide()
+                
+            # Render midi signals
+            saved_signals = self.config.get('midi_signals', [])
+            if not saved_signals and self.midi_status == 'ready':
+                lbl = QLabel("請點選上方的「新增 MIDI 訊號」按鈕")
+                lbl.setAlignment(Qt.AlignCenter)
+                self.scroll_layout.addWidget(lbl)
+                self.app_widgets.append(lbl)
+            else:
+                for sig in saved_signals:
+                    w = MidiSignalWidget(sig)
+                    w.checkbox.stateChanged.connect(self.save_midi_signals)
+                    w.edit_btn.clicked.connect(lambda checked=False, s=sig: self.edit_midi_signal(s))
+                    w.delete_btn.clicked.connect(lambda checked=False, s=sig: self.delete_midi_signal(s))
+                    self.scroll_layout.addWidget(w)
+                    self.app_widgets.append(w)
                 
         elif struct['type'] == 'matrix':
             self.matrix_frame.show()
@@ -509,6 +611,47 @@ class MainWindow(QMainWindow):
                 selected_devices.append(w.app_info['id'])
         self.config.set('selected_apps', selected_devices)
 
+    def save_midi_signals(self):
+        signals = self.config.get('midi_signals', [])
+        for w in self.app_widgets:
+            if isinstance(w, MidiSignalWidget):
+                sig = w.signal_data
+                sig['enabled'] = w.checkbox.isChecked()
+                for i, s in enumerate(signals):
+                    if s['id'] == sig['id']:
+                        signals[i] = sig
+                        break
+        self.config.set('midi_signals', signals)
+        
+    def add_midi_signal(self):
+        dialog = MidiSignalDialog(self)
+        if dialog.exec() == QDialog.Accepted:
+            new_sig = dialog.get_data()
+            signals = self.config.get('midi_signals', [])
+            signals.append(new_sig)
+            self.config.set('midi_signals', signals)
+            self.refresh_apps()
+            
+    def edit_midi_signal(self, sig):
+        dialog = MidiSignalDialog(self, sig)
+        if dialog.exec() == QDialog.Accepted:
+            updated_sig = dialog.get_data()
+            signals = self.config.get('midi_signals', [])
+            for i, s in enumerate(signals):
+                if s['id'] == updated_sig['id']:
+                    signals[i] = updated_sig
+                    break
+            self.config.set('midi_signals', signals)
+            self.refresh_apps()
+            
+    def delete_midi_signal(self, sig):
+        reply = QMessageBox.question(self, "刪除", f"確定要刪除 {sig.get('name')} 嗎？", QMessageBox.Yes | QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            signals = self.config.get('midi_signals', [])
+            signals = [s for s in signals if s['id'] != sig['id']]
+            self.config.set('midi_signals', signals)
+            self.refresh_apps()
+
     def start_icon_adjustment(self):
         self.adjust_icon_btn.setText("請點擊左鍵放置圖標...")
         self.adjust_icon_btn.setEnabled(False)
@@ -579,9 +722,11 @@ class MainWindow(QMainWindow):
             for w in self.app_widgets:
                 if isinstance(w, AppItemWidget) and w.checkbox.isChecked():
                     selected_devices.append(w.app_info['id'])
+                elif isinstance(w, MidiSignalWidget) and w.checkbox.isChecked():
+                    selected_devices.append(w.signal_data)
                     
             if not selected_devices:
-                QMessageBox.warning(self, "錯誤", "請至少勾選一個裝置！")
+                QMessageBox.warning(self, "錯誤", "請至少勾選一個裝置/訊號！")
                 return
 
             mode = 'ptt' if self.mode_ptt_radio.isChecked() else 'toggle'

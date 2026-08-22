@@ -440,11 +440,12 @@ class MainWindow(QMainWindow):
         
         if not self.is_midi_installed:
             # Install mode
-            installer_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'resources', 'loopMIDISetup.exe')
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            installer_path = os.path.join(project_root, 'resources', 'loopMIDISetup.exe')
             if os.path.exists(installer_path):
                 os.startfile(installer_path)
             else:
-                QMessageBox.warning(self, "錯誤", "找不到安裝檔，請確認 resources/loopMIDISetup.exe 是否存在！")
+                QMessageBox.warning(self, "錯誤", f"找不到安裝檔，尋找路徑為: {installer_path}")
         else:
             # Uninstall mode (open appwiz.cpl)
             QMessageBox.information(self, "提示", "請在即將開啟的視窗中找到「loopMIDI」，點擊解除安裝。")

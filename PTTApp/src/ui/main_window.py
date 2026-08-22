@@ -11,6 +11,7 @@ from src.core.audio_manager import AudioManager
 from src.core.ptt_worker import PTTWorker
 from src.ui.overlay import MicOffOverlay
 from src.core.config_manager import ConfigManager
+from src.ui.theme_utils import get_main_stylesheet, get_theme_colors, get_font
 
 def get_key_name(key):
     if hasattr(key, 'name'):
@@ -111,7 +112,9 @@ class AppItemWidget(QWidget):
         
         layout = QHBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
-        self.setStyleSheet("background-color: #2B2B2B; color: #FFFFFF; border-radius: 5px;")
+        
+        colors = get_theme_colors()
+        self.setStyleSheet(f"background-color: {colors.bg_card}; color: {colors.text_main}; border-radius: 5px;")
 
         # Checkbox
         self.checkbox = QCheckBox()
@@ -124,13 +127,13 @@ class AppItemWidget(QWidget):
         
         # Name
         self.name_label = QLabel(app_info['name'])
-        self.name_label.setFont(QFont("Microsoft JhengHei", 10))
+        self.name_label.setFont(get_font(10))
         layout.addWidget(self.name_label)
         
         layout.addStretch()
 
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -153,33 +156,8 @@ class MainWindow(QMainWindow):
         self.refresh_apps()
 
     def init_ui(self):
-        self.setStyleSheet("""
-            QMainWindow, QWidget#central {
-                background-color: #222222;
-                color: #FFFFFF;
-            }
-            QLabel, QCheckBox, QRadioButton {
-                color: #FFFFFF;
-                background: transparent;
-            }
-            QScrollArea {
-                background-color: #222222;
-                border: none;
-            }
-            QWidget#scroll_content {
-                background-color: #222222;
-            }
-            QPushButton {
-                background-color: #2B2B2B;
-                color: #FFFFFF;
-                border: 1px solid #444444;
-                padding: 5px;
-                border-radius: 3px;
-            }
-            QPushButton:hover {
-                background-color: #3B3B3B;
-            }
-        """)
+        self.colors = get_theme_colors()
+        self.setStyleSheet(get_main_stylesheet())
         central = QWidget()
         central.setObjectName("central")
         self.setCentralWidget(central)
@@ -187,7 +165,7 @@ class MainWindow(QMainWindow):
 
         # Header
         header_lbl = QLabel("🎤 選擇要控制靜音的麥克風 / 輸入裝置")
-        header_lbl.setFont(QFont("Microsoft JhengHei", 12, QFont.Bold))
+        header_lbl.setFont(get_font(12, bold=True))
         main_layout.addWidget(header_lbl)
 
         # Apps List
@@ -209,9 +187,9 @@ class MainWindow(QMainWindow):
         mode_layout = QHBoxLayout()
         self.mode_group = QButtonGroup(self)
         self.mode_ptt_radio = QRadioButton("模式 1：按住發話 (放開靜音)")
-        self.mode_ptt_radio.setFont(QFont("Microsoft JhengHei", 10))
+        self.mode_ptt_radio.setFont(get_font(10))
         self.mode_toggle_radio = QRadioButton("模式 2：切換模式 (按一下開/關)")
-        self.mode_toggle_radio.setFont(QFont("Microsoft JhengHei", 10))
+        self.mode_toggle_radio.setFont(get_font(10))
         
         if self.config.get('mode') == 'toggle':
             self.mode_toggle_radio.setChecked(True)
@@ -233,7 +211,7 @@ class MainWindow(QMainWindow):
             self.hotkey_lbl = QLabel(f"目前快捷鍵: {self.hotkey}")
         else:
             self.hotkey_lbl = QLabel("目前快捷鍵: 無")
-        self.hotkey_lbl.setFont(QFont("Microsoft JhengHei", 10))
+        self.hotkey_lbl.setFont(get_font(10))
         
         self.set_hotkey_btn = QPushButton("設定快捷鍵")
         self.set_hotkey_btn.clicked.connect(self.start_hotkey_listen)
@@ -241,7 +219,7 @@ class MainWindow(QMainWindow):
         self.cancel_hotkey_btn = QPushButton("取消綁定")
         self.cancel_hotkey_btn.clicked.connect(self.cancel_hotkey_listen)
         self.cancel_hotkey_btn.hide()
-        self.cancel_hotkey_btn.setStyleSheet("background-color: #a32a2a; color: white; border: none; padding: 5px;")
+        self.cancel_hotkey_btn.setStyleSheet(f"background-color: {self.colors.error_bg}; color: white; border: none; padding: 5px;")
         
         self.adjust_icon_btn = QPushButton("調整圖標位置")
         self.adjust_icon_btn.clicked.connect(self.start_icon_adjustment)
@@ -254,8 +232,8 @@ class MainWindow(QMainWindow):
 
         # Start/Stop
         self.start_btn = QPushButton("▶ 啟動 PTT")
-        self.start_btn.setFont(QFont("Microsoft JhengHei", 12, QFont.Bold))
-        self.start_btn.setStyleSheet("background-color: #2b7a2b; color: white; border: none;")
+        self.start_btn.setFont(get_font(12, bold=True))
+        self.start_btn.setStyleSheet(f"background-color: {self.colors.success_bg}; color: white; border: none;")
         self.start_btn.clicked.connect(self.toggle_ptt)
         self.start_btn.setFixedHeight(40)
         main_layout.addWidget(self.start_btn)
@@ -353,7 +331,7 @@ class MainWindow(QMainWindow):
             self.ptt_worker.stop()
             self.overlay.hide()
             self.start_btn.setText("▶ 啟動 PTT")
-            self.start_btn.setStyleSheet("background-color: #2b7a2b; color: white; border: none;")
+            self.start_btn.setStyleSheet(f"background-color: {self.colors.success_bg}; color: white; border: none;")
             self.set_ui_enabled(True)
         else:
             if not self.hotkey:
@@ -373,7 +351,7 @@ class MainWindow(QMainWindow):
             if self.ptt_worker.start(self.hotkey, selected_devices, mode):
                 self.overlay.show()
                 self.start_btn.setText("⏹ 停止 PTT")
-                self.start_btn.setStyleSheet("background-color: #a32a2a; color: white; border: none;")
+                self.start_btn.setStyleSheet(f"background-color: {self.colors.error_bg}; color: white; border: none;")
                 self.set_ui_enabled(False)
             else:
                 QMessageBox.warning(self, "錯誤", "啟動失敗！")

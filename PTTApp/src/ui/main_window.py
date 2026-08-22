@@ -133,10 +133,12 @@ class AppItemWidget(QWidget):
         layout.addStretch()
 
 
+VERSION = "1.0.1"
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("按鍵發話 (PTT) 控制器")
+        self.setWindowTitle(f"按鍵發話 (PTT) 控制器 v{VERSION}")
         self.resize(450, 550)
 
         self.config = ConfigManager()

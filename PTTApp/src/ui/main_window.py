@@ -132,6 +132,13 @@ class AppItemWidget(QWidget):
         
         layout.addStretch()
 
+        # Delete button for matrix routes (optional, hidden by default)
+        self.delete_btn = QPushButton("🗑️")
+        self.delete_btn.setFixedSize(30, 30)
+        self.delete_btn.setStyleSheet("background: transparent; border: none;")
+        self.delete_btn.hide()
+        layout.addWidget(self.delete_btn)
+
 
 VERSION = "1.0.2"
 
@@ -183,6 +190,24 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(self.engine_combo)
         header_layout.addStretch()
         main_layout.addLayout(header_layout)
+
+        # Matrix Controls (hidden by default, shown for Voicemeeter)
+        self.matrix_frame = QWidget()
+        matrix_layout = QHBoxLayout(self.matrix_frame)
+        matrix_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.matrix_in_combo = QComboBox()
+        self.matrix_out_combo = QComboBox()
+        self.matrix_add_btn = QPushButton("➕ 新增路由控制")
+        self.matrix_add_btn.clicked.connect(self.add_matrix_route)
+        
+        matrix_layout.addWidget(QLabel("輸入:"))
+        matrix_layout.addWidget(self.matrix_in_combo, stretch=1)
+        matrix_layout.addWidget(QLabel("➜ 輸出:"))
+        matrix_layout.addWidget(self.matrix_out_combo, stretch=1)
+        matrix_layout.addWidget(self.matrix_add_btn)
+        self.matrix_frame.hide()
+        main_layout.addWidget(self.matrix_frame)
 
         # Apps List
         self.scroll_area = QScrollArea()
@@ -269,22 +294,93 @@ class MainWindow(QMainWindow):
             w.deleteLater()
         self.app_widgets.clear()
 
-        devices = self.audio_manager.get_capture_devices()
-        if not devices:
-            lbl = QLabel("目前沒有偵測到任何音效輸入裝置")
-            lbl.setAlignment(Qt.AlignCenter)
-            self.scroll_layout.addWidget(lbl)
-            self.app_widgets.append(lbl)
-            return
+        struct = self.audio_manager.get_structure()
+        
+        if struct['type'] == 'matrix':
+            self.matrix_frame.show()
+            self.refresh_btn.hide()
+            
+            # Update comboboxes
+            self.matrix_in_combo.clear()
+            self.matrix_out_combo.clear()
+            
+            self.matrix_in_data = struct['inputs']
+            self.matrix_out_data = struct['outputs']
+            
+            for item in self.matrix_in_data:
+                self.matrix_in_combo.addItem(item['name'], userData=item['id'])
+            for item in self.matrix_out_data:
+                self.matrix_out_combo.addItem(item['name'], userData=item['id'])
+                
+            # Render saved matrix routes
+            saved_devices = self.config.get('selected_apps') or []
+            if not saved_devices:
+                lbl = QLabel("請在上方選擇輸入與輸出端口，並點擊新增。")
+                lbl.setAlignment(Qt.AlignCenter)
+                self.scroll_layout.addWidget(lbl)
+                self.app_widgets.append(lbl)
+            else:
+                for route_id in saved_devices:
+                    # try to parse name
+                    parts = route_id.split('_')
+                    if len(parts) == 3:
+                        in_id = parts[1]
+                        out_id = parts[2]
+                        
+                        in_name = next((x['name'] for x in self.matrix_in_data if x['id'] == in_id), f"Strip {in_id}")
+                        out_name = next((x['name'] for x in self.matrix_out_data if x['id'] == out_id), f"{out_id}")
+                        
+                        app_info = {'id': route_id, 'name': f"{in_name} ➜ {out_name}"}
+                        w = AppItemWidget(app_info)
+                        w.checkbox.setChecked(True)
+                        w.checkbox.stateChanged.connect(self.save_apps)
+                        w.delete_btn.show()
+                        
+                        # Use default argument capture for lambda in loop
+                        w.delete_btn.clicked.connect(lambda checked=False, rid=route_id: self.delete_matrix_route(rid))
+                        self.scroll_layout.addWidget(w)
+                        self.app_widgets.append(w)
+                        
+        else:
+            self.matrix_frame.hide()
+            self.refresh_btn.show()
+            
+            devices = struct.get('items', [])
+            if not devices:
+                lbl = QLabel("目前沒有偵測到任何音效裝置")
+                lbl.setAlignment(Qt.AlignCenter)
+                self.scroll_layout.addWidget(lbl)
+                self.app_widgets.append(lbl)
+                return
 
-        saved_devices = self.config.get('selected_apps') or []
-        for app_info in devices:
-            w = AppItemWidget(app_info)
-            if app_info['id'] in saved_devices:
-                w.checkbox.setChecked(True)
-            w.checkbox.stateChanged.connect(self.save_apps)
-            self.scroll_layout.addWidget(w)
-            self.app_widgets.append(w)
+            saved_devices = self.config.get('selected_apps') or []
+            for app_info in devices:
+                w = AppItemWidget(app_info)
+                if app_info['id'] in saved_devices:
+                    w.checkbox.setChecked(True)
+                w.checkbox.stateChanged.connect(self.save_apps)
+                self.scroll_layout.addWidget(w)
+                self.app_widgets.append(w)
+
+    def add_matrix_route(self):
+        in_id = self.matrix_in_combo.currentData()
+        out_id = self.matrix_out_combo.currentData()
+        if in_id is None or out_id is None:
+            return
+            
+        route_id = f"strip_{in_id}_{out_id}"
+        saved = self.config.get('selected_apps') or []
+        if route_id not in saved:
+            saved.append(route_id)
+            self.config.set('selected_apps', saved)
+            self.refresh_apps()
+            
+    def delete_matrix_route(self, route_id):
+        saved = self.config.get('selected_apps') or []
+        if route_id in saved:
+            saved.remove(route_id)
+            self.config.set('selected_apps', saved)
+            self.refresh_apps()
 
     def save_mode(self):
         mode = 'ptt' if self.mode_ptt_radio.isChecked() else 'toggle'

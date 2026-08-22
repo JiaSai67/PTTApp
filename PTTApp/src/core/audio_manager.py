@@ -13,9 +13,9 @@ def log_debug(msg):
         pass
 
 class BaseAudioEngine:
-    def get_items(self):
-        """Returns a list of dicts with {'id': str, 'name': str}"""
-        return []
+    def get_structure(self):
+        """Returns structure dict for UI rendering"""
+        return {'type': 'list', 'items': []}
         
     def set_mute(self, target_ids, mute: bool):
         pass
@@ -25,7 +25,7 @@ class BaseAudioEngine:
 
 
 class WindowsAudioEngine(BaseAudioEngine):
-    def get_items(self):
+    def get_structure(self):
         from pycaw.pycaw import AudioUtilities
         from pycaw.constants import EDataFlow
         devices_info = []
@@ -46,7 +46,7 @@ class WindowsAudioEngine(BaseAudioEngine):
                     continue
         except Exception as e:
             log_debug(f"Error fetching windows devices: {e}")
-        return devices_info
+        return {'type': 'list', 'items': devices_info}
 
     def set_mute(self, target_ids, mute: bool):
         from pycaw.pycaw import AudioUtilities
@@ -80,8 +80,6 @@ class VoicemeeterEngine(BaseAudioEngine):
             return True
         try:
             import voicemeeterlib
-            # Try connecting to the running voicemeeter. 
-            # kind_id can be 'basic', 'banana', 'potato'. We can try potato first.
             try:
                 self.v = voicemeeterlib.api('potato')
                 self.v.login()
@@ -101,38 +99,57 @@ class VoicemeeterEngine(BaseAudioEngine):
             log_debug(f"Voicemeeter connect failed: {e}")
             return False
 
-    def get_items(self):
+    def get_structure(self):
         if not self._connect():
-            return []
+            return {'type': 'matrix', 'inputs': [], 'outputs': []}
             
-        items = []
+        inputs = []
+        outputs = []
         try:
-            # For each strip, we can route to multiple buses.
-            # Typical buses in Potato: A1..A5, B1..B3
-            # In Banana: A1..A3, B1..B2
-            # We list endpoints like: "Strip 0 (Mic) -> Bus B1"
-            
-            # Map bus index to label (A1, B1 etc.)
-            bus_labels = []
-            for b in self.v.bus:
-                bus_labels.append(b.label if b.label else f"Bus")
-                
+            # Inputs
             for i, strip in enumerate(self.v.strip):
-                strip_name = strip.label if strip.label else f"Strip {i}"
-                if not strip_name.strip():
-                    strip_name = f"Hardware Input {i+1}"
+                strip_name = strip.label if getattr(strip, 'label', '') else ""
                 
-                # We can toggle routing to any Bus. Let's list all valid bus toggles for this strip.
-                # A strip has attributes A1, A2, B1, B2 etc.
-                for attr in ['A1', 'A2', 'A3', 'A4', 'A5', 'B1', 'B2', 'B3']:
-                    if hasattr(strip, attr):
-                        # Example ID: "strip_0_B1"
-                        item_id = f"strip_{i}_{attr}"
-                        item_name = f"{strip_name} ➜ {attr}"
-                        items.append({'id': item_id, 'name': item_name})
+                if hasattr(strip, 'device'):
+                    # Hardware Strip
+                    dev_name = getattr(strip.device, 'name', '')
+                    if not dev_name:
+                        continue # Skip unconnected physical ports
+                    name_str = f"Hardware Input {i+1} ({dev_name})" if not strip_name else f"{strip_name} ({dev_name})"
+                else:
+                    # Virtual Strip
+                    if not strip_name:
+                        if "potato" in str(self.v).lower():
+                            names = ["VAIO", "AUX", "VAIO3"]
+                            name_str = f"Virtual Input {names[i-5] if i >= 5 and i-5 < len(names) else i}"
+                        else:
+                            name_str = f"Virtual Input {i}"
+                    else:
+                        name_str = strip_name
+                        
+                inputs.append({'id': str(i), 'name': name_str})
+
+            # Outputs (Buses)
+            for i, bus in enumerate(self.v.bus):
+                bus_name = bus.label if getattr(bus, 'label', '') else ""
+                
+                # Derive logical names like A1, B1 based on is_physical
+                is_physical = hasattr(bus, 'device')
+                # But actually, potato has A1-A5, B1-B3.
+                # A simple mapping for Potato:
+                # 0-4: A1-A5, 5-7: B1-B3
+                if i < 5:
+                    logical = f"A{i+1}"
+                else:
+                    logical = f"B{i-4}"
+                    
+                name_str = f"{logical}" + (f" ({bus_name})" if bus_name else "")
+                outputs.append({'id': logical, 'name': name_str})
+
         except Exception as e:
-            log_debug(f"Voicemeeter get_items error: {e}")
-        return items
+            log_debug(f"Voicemeeter get_structure error: {e}")
+            
+        return {'type': 'matrix', 'inputs': inputs, 'outputs': outputs}
 
     def set_mute(self, target_ids, mute: bool):
         if not self._connect():
@@ -140,7 +157,6 @@ class VoicemeeterEngine(BaseAudioEngine):
             
         try:
             for item_id in target_ids:
-                # item_id format: "strip_{index}_{bus}"
                 parts = item_id.split('_')
                 if len(parts) == 3:
                     strip_idx = int(parts[1])
@@ -149,8 +165,6 @@ class VoicemeeterEngine(BaseAudioEngine):
                     if strip_idx < len(self.v.strip):
                         strip = self.v.strip[strip_idx]
                         if hasattr(strip, bus_attr):
-                            # If mute is True, we turn OFF the routing (False)
-                            # If mute is False, we turn ON the routing (True)
                             val = not mute
                             setattr(strip, bus_attr, val)
                             log_debug(f"Voicemeeter set {bus_attr} on Strip {strip_idx} to {val}")
@@ -180,8 +194,8 @@ class AudioManager:
     def get_current_engine(self):
         return self.engines.get(self.engine_type, self.engines['windows'])
 
-    def get_capture_devices(self):
-        return self.get_current_engine().get_items()
+    def get_structure(self):
+        return self.get_current_engine().get_structure()
 
     def set_mute_for_devices(self, target_ids, mute: bool):
         self.get_current_engine().set_mute(target_ids, mute)

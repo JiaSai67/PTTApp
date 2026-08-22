@@ -216,8 +216,15 @@ class StudioOneEngine(BaseAudioEngine):
 
     def get_structure(self):
         # We can re-check the port to see if it's available
-        installed = self._init_port()
-        return {'type': 'midi', 'installed': installed}
+        if self._init_port():
+            return {'type': 'midi', 'status': 'ready'}
+            
+        import os
+        loopmidi_path = r"C:\Program Files (x86)\Tobias Erichsen\loopMIDI\loopMIDI.exe"
+        if os.path.exists(loopmidi_path):
+            return {'type': 'midi', 'status': 'no_port'}
+            
+        return {'type': 'midi', 'status': 'not_installed'}
 
     def set_mute(self, target_ids, mute: bool):
         if not self._init_port():

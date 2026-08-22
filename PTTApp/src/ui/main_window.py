@@ -336,12 +336,18 @@ class MainWindow(QMainWindow):
             
             colors = get_theme_colors()
             
-            self.is_midi_installed = struct.get('installed', False)
-            if self.is_midi_installed:
+            self.midi_status = struct.get('status', 'not_installed')
+            
+            if self.midi_status == 'ready':
                 self.midi_status_lbl.setText("✅ loopMIDI 驅動已就緒")
                 self.midi_status_lbl.setStyleSheet(f"color: {colors.success};")
                 self.midi_action_btn.setText("🗑️ 解除安裝 loopMIDI")
                 self.midi_action_btn.setStyleSheet(f"background-color: {colors.error_bg}; color: white; border: none;")
+            elif self.midi_status == 'no_port':
+                self.midi_status_lbl.setText("⚠️ 請開啟 loopMIDI 並點擊左下角 [+] 新增 Port")
+                self.midi_status_lbl.setStyleSheet(f"color: #FFA500;") # Orange
+                self.midi_action_btn.setText("🚀 開啟 loopMIDI 介面")
+                self.midi_action_btn.setStyleSheet(f"background-color: #0078D4; color: white; border: none;")
             else:
                 self.midi_status_lbl.setText("❌ 尚未安裝 loopMIDI 驅動")
                 self.midi_status_lbl.setStyleSheet(f"color: {colors.error};")
@@ -444,36 +450,53 @@ class MainWindow(QMainWindow):
             return
             
         struct = self.audio_manager.get_structure()
-        current_state = struct.get('installed', False)
+        current_status = struct.get('status', 'not_installed')
         
-        if self.expected_midi_state is not None and current_state == self.expected_midi_state:
+        # If we were expecting a change and it happened
+        if self.expected_midi_state is not None and current_status == self.expected_midi_state:
             self.midi_check_timer.stop()
             self.refresh_apps()
-            if current_state:
-                QMessageBox.information(self, "成功", "偵測到 loopMIDI 驅動已成功安裝！\n現在可以開始綁定訊號了。")
+            if current_status == 'ready':
+                QMessageBox.information(self, "成功", "偵測到 loopMIDI 虛擬線已成功連接！\n現在可以開始綁定訊號了。")
+            elif current_status == 'no_port':
+                QMessageBox.information(self, "提示", "loopMIDI 已經啟動，但還沒有建立虛擬線。\n請在 loopMIDI 視窗左下角點擊 [+] 號。")
+                self.expected_midi_state = 'ready' # Wait for port
+                self.midi_check_timer.start(1000)
             else:
                 QMessageBox.information(self, "成功", "loopMIDI 已成功解除安裝。")
+            self.expected_midi_state = None
+        # Also auto-update UI if status changes unexpectedly during polling
+        elif current_status == 'ready' and self.expected_midi_state == 'ready':
+            self.midi_check_timer.stop()
+            self.refresh_apps()
             self.expected_midi_state = None
 
     def handle_midi_action(self):
         import os
         import subprocess
         
-        if not self.is_midi_installed:
+        if self.midi_status == 'not_installed':
             # Install mode
             project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             installer_path = os.path.join(project_root, 'resources', 'loopMIDISetup.exe')
             if os.path.exists(installer_path):
                 os.startfile(installer_path)
-                self.expected_midi_state = True
+                self.expected_midi_state = 'no_port' # First expect it to be installed
                 self.midi_check_timer.start(1000)
             else:
                 QMessageBox.warning(self, "錯誤", f"找不到安裝檔，尋找路徑為: {installer_path}")
+        elif self.midi_status == 'no_port':
+            # Launch loopMIDI app
+            loopmidi_path = r"C:\Program Files (x86)\Tobias Erichsen\loopMIDI\loopMIDI.exe"
+            if os.path.exists(loopmidi_path):
+                subprocess.Popen(loopmidi_path, shell=True)
+                self.expected_midi_state = 'ready'
+                self.midi_check_timer.start(1000)
         else:
             # Uninstall mode (open appwiz.cpl)
             QMessageBox.information(self, "提示", "請在即將開啟的視窗中找到「loopMIDI」，點擊解除安裝。\n程式會在背景自動偵測解除安裝進度。")
             subprocess.Popen("appwiz.cpl", shell=True)
-            self.expected_midi_state = False
+            self.expected_midi_state = 'not_installed'
             self.midi_check_timer.start(1000)
 
     def save_mode(self):

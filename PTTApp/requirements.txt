@@ -1,8 +1,0 @@
-PySide6
-pynput
-pycaw
-pywin32
-qfluentwidgets
-voicemeeter-api
-mido
-python-rtmidi

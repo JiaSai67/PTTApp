@@ -3,3 +3,7 @@ pynput
 pycaw
 pywin32
 Pillow
+qfluentwidgets
+voicemeeter-api
+mido
+python-rtmidi

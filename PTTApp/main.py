@@ -18,6 +18,7 @@ def main():
         pass
 
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")
     
     icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'icon', 'mic.png')
     app.setWindowIcon(QIcon(icon_path))

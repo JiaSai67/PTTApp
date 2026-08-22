@@ -26,12 +26,12 @@ class PTTWorker(QObject):
         self.k_listener = None
         self.m_listener = None
         
-    def start(self, hotkey_str, target_exe_names, mode='ptt'):
+    def start(self, hotkey_str, target_device_ids, mode='ptt'):
         self.hotkey_parts = set(hotkey_str.split('+'))
-        self.target_exe_names = target_exe_names
+        self.target_device_ids = target_device_ids
         self.mode = mode
         
-        if not self.hotkey_parts or not self.target_exe_names:
+        if not self.hotkey_parts or not self.target_device_ids:
             return False
             
         self.is_running = True
@@ -39,8 +39,8 @@ class PTTWorker(QObject):
         self.keys_down = False
         self.current_pressed.clear()
         
-        # Initial state: Mute the target apps
-        self.audio_manager.set_mute_for_apps(self.target_exe_names, mute=True)
+        # Initial state: Mute the target devices
+        self.audio_manager.set_mute_for_devices(self.target_device_ids, mute=True)
         self.state_changed.emit(False)
         
         self.k_listener = keyboard.Listener(on_press=self._on_k_press, on_release=self._on_k_release)
@@ -59,11 +59,11 @@ class PTTWorker(QObject):
             self.m_listener.stop()
             self.m_listener = None
             
-        # Restore state: Unmute the target apps
-        self.audio_manager.set_mute_for_apps(self.target_exe_names, mute=False)
+        # Restore state: Unmute the target devices
+        self.audio_manager.set_mute_for_devices(self.target_device_ids, mute=False)
         self.state_changed.emit(True) # Treat as unmuted when stopped
         
-        self.target_exe_names = []
+        self.target_device_ids = []
         self.is_active = False
         self.keys_down = False
         self.current_pressed.clear()
@@ -71,23 +71,22 @@ class PTTWorker(QObject):
     def _check_state(self):
         if not self.is_running: return
         
-        # Check if all required hotkey parts are currently pressed
         all_pressed = self.hotkey_parts.issubset(self.current_pressed)
         
         if self.mode == 'ptt':
             if all_pressed and not self.is_active:
                 self.is_active = True
-                self.audio_manager.set_mute_for_apps(self.target_exe_names, mute=False)
+                self.audio_manager.set_mute_for_devices(self.target_device_ids, mute=False)
                 self.state_changed.emit(True)
             elif not all_pressed and self.is_active:
                 self.is_active = False
-                self.audio_manager.set_mute_for_apps(self.target_exe_names, mute=True)
+                self.audio_manager.set_mute_for_devices(self.target_device_ids, mute=True)
                 self.state_changed.emit(False)
                 
         elif self.mode == 'toggle':
             if all_pressed and not self.keys_down:
                 self.is_active = not self.is_active
-                self.audio_manager.set_mute_for_apps(self.target_exe_names, mute=not self.is_active)
+                self.audio_manager.set_mute_for_devices(self.target_device_ids, mute=not self.is_active)
                 self.state_changed.emit(self.is_active)
                 
         self.keys_down = all_pressed

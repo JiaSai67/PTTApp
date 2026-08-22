@@ -117,12 +117,9 @@ class AppItemWidget(QWidget):
         self.checkbox = QCheckBox()
         layout.addWidget(self.checkbox)
         
-        # Icon
-        self.icon_label = QLabel()
-        provider = QFileIconProvider()
-        icon = provider.icon(QFileInfo(app_info['exe_path']))
-        if not icon.isNull():
-            self.icon_label.setPixmap(icon.pixmap(32, 32))
+        # Icon (Fallback mic icon since these are devices)
+        self.icon_label = QLabel("🎤")
+        self.icon_label.setFont(QFont("Segoe UI Emoji", 14))
         layout.addWidget(self.icon_label)
         
         # Name
@@ -189,7 +186,7 @@ class MainWindow(QMainWindow):
         main_layout = QVBoxLayout(central)
 
         # Header
-        header_lbl = QLabel("🎤 選擇要控制麥克風的應用程式")
+        header_lbl = QLabel("🎤 選擇要控制靜音的麥克風 / 輸入裝置")
         header_lbl.setFont(QFont("Microsoft JhengHei", 12, QFont.Bold))
         main_layout.addWidget(header_lbl)
 
@@ -204,7 +201,7 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.scroll_area)
 
         # Refresh btn
-        self.refresh_btn = QPushButton("🔄 重新整理清單")
+        self.refresh_btn = QPushButton("🔄 重新整理裝置清單")
         self.refresh_btn.clicked.connect(self.refresh_apps)
         main_layout.addWidget(self.refresh_btn)
 
@@ -270,18 +267,18 @@ class MainWindow(QMainWindow):
             w.deleteLater()
         self.app_widgets.clear()
 
-        apps = self.audio_manager.get_capture_apps()
-        if not apps:
-            lbl = QLabel("目前沒有偵測到任何音效進程")
+        devices = self.audio_manager.get_capture_devices()
+        if not devices:
+            lbl = QLabel("目前沒有偵測到任何音效輸入裝置")
             lbl.setAlignment(Qt.AlignCenter)
             self.scroll_layout.addWidget(lbl)
             self.app_widgets.append(lbl)
             return
 
-        saved_apps = self.config.get('selected_apps') or []
-        for app_info in apps:
+        saved_devices = self.config.get('selected_apps') or []
+        for app_info in devices:
             w = AppItemWidget(app_info)
-            if app_info['exe_name'] in saved_apps:
+            if app_info['id'] in saved_devices:
                 w.checkbox.setChecked(True)
             w.checkbox.stateChanged.connect(self.save_apps)
             self.scroll_layout.addWidget(w)
@@ -292,11 +289,11 @@ class MainWindow(QMainWindow):
         self.config.set('mode', mode)
 
     def save_apps(self):
-        selected_exes = []
+        selected_devices = []
         for w in self.app_widgets:
             if isinstance(w, AppItemWidget) and w.checkbox.isChecked():
-                selected_exes.append(w.app_info['exe_name'])
-        self.config.set('selected_apps', selected_exes)
+                selected_devices.append(w.app_info['id'])
+        self.config.set('selected_apps', selected_devices)
 
     def start_icon_adjustment(self):
         self.adjust_icon_btn.setText("請點擊左鍵放置圖標...")
@@ -363,17 +360,17 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "錯誤", "請先設定快捷鍵！")
                 return
             
-            selected_exes = []
+            selected_devices = []
             for w in self.app_widgets:
                 if isinstance(w, AppItemWidget) and w.checkbox.isChecked():
-                    selected_exes.append(w.app_info['exe_name'])
+                    selected_devices.append(w.app_info['id'])
                     
-            if not selected_exes:
-                QMessageBox.warning(self, "錯誤", "請至少勾選一個應用程式！")
+            if not selected_devices:
+                QMessageBox.warning(self, "錯誤", "請至少勾選一個裝置！")
                 return
 
             mode = 'ptt' if self.mode_ptt_radio.isChecked() else 'toggle'
-            if self.ptt_worker.start(self.hotkey, selected_exes, mode):
+            if self.ptt_worker.start(self.hotkey, selected_devices, mode):
                 self.overlay.show()
                 self.start_btn.setText("⏹ 停止 PTT")
                 self.start_btn.setStyleSheet("background-color: #a32a2a; color: white; border: none;")

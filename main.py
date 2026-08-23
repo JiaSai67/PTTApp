@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QIcon
 from src.ui.main_window import MainWindow
 
-VERSION = "1.0.6"
+VERSION = "1.0.7"
 
 def main():
     print(f"Starting PTTApp v{VERSION}...")

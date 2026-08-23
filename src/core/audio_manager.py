@@ -96,11 +96,11 @@ class VoicemeeterEngine(BaseAudioEngine):
     def get_structure(self):
         try:
             import voicemeeterlib
-        except ImportError:
+        except (ImportError, Exception):
             return {'type': 'matrix', 'status': 'not_installed', 'inputs': [], 'outputs': []}
             
         if not self._connect():
-            return {'type': 'matrix', 'status': 'no_port', 'inputs': [], 'outputs': []}
+            return {'type': 'matrix', 'status': 'not_installed', 'inputs': [], 'outputs': []}
             
         inputs = []
         outputs = []

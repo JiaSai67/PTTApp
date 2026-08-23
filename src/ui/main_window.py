@@ -231,7 +231,7 @@ class AppItemWidget(QWidget):
         layout.addWidget(self.delete_btn)
 
 
-VERSION = "1.0.6"
+VERSION = "1.0.7"
 
 class MainWindow(QMainWindow):
     def __init__(self):

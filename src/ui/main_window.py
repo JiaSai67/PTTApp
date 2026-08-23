@@ -231,7 +231,7 @@ class AppItemWidget(QWidget):
         layout.addWidget(self.delete_btn)
 
 
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -249,10 +249,11 @@ class MainWindow(QMainWindow):
         self.app_widgets = []
         self.listener_thread = None
         self.mover_thread = None
+        self.midi_status = None
         
-        self.midi_check_timer = QTimer(self)
-        self.midi_check_timer.timeout.connect(self.check_midi_status_poll)
-        self.expected_midi_state = None
+        # Continuous background poll timer for MIDI state changes
+        self.midi_poll_timer = QTimer(self)
+        self.midi_poll_timer.timeout.connect(self.poll_midi_status)
         
         self.init_ui()
         self.refresh_apps()
@@ -281,6 +282,7 @@ class MainWindow(QMainWindow):
             self.engine_combo.setCurrentIndex(1)
         elif saved_engine == 'studioone':
             self.engine_combo.setCurrentIndex(2)
+            self.midi_poll_timer.start(1000)
         self.audio_manager.set_engine(saved_engine)
         self.engine_combo.currentIndexChanged.connect(self.on_engine_changed)
         
@@ -313,24 +315,32 @@ class MainWindow(QMainWindow):
         midi_layout.setAlignment(Qt.AlignCenter)
         
         self.midi_status_lbl = QLabel()
-        self.midi_status_lbl.setFont(get_font(12, bold=True))
+        self.midi_status_lbl.setFont(get_font(11, bold=True))
         self.midi_status_lbl.setAlignment(Qt.AlignCenter)
+        self.midi_status_lbl.setWordWrap(True)
         
         self.midi_action_btn = QPushButton()
         self.midi_action_btn.setFont(get_font(10, bold=True))
-        self.midi_action_btn.setFixedSize(250, 40)
+        self.midi_action_btn.setFixedSize(260, 38)
         self.midi_action_btn.clicked.connect(self.handle_midi_action)
         
+        self.midi_rescan_btn = QPushButton("🔄 重新整理")
+        self.midi_rescan_btn.setFixedSize(110, 34)
+        self.midi_rescan_btn.clicked.connect(self.refresh_apps)
+        
         self.midi_add_btn = QPushButton("➕ 新增 MIDI 訊號")
+        self.midi_add_btn.setFixedSize(140, 34)
         self.midi_add_btn.clicked.connect(self.add_midi_signal)
         
-        self.midi_diag_btn = QPushButton("🛠️ 環境檢測")
+        self.midi_diag_btn = QPushButton("🛠️ 診斷報告")
+        self.midi_diag_btn.setFixedSize(110, 34)
         self.midi_diag_btn.clicked.connect(self.run_midi_diagnostic)
         
         midi_layout.addWidget(self.midi_status_lbl)
         midi_layout.addWidget(self.midi_action_btn, alignment=Qt.AlignCenter)
         
         btn_layout = QHBoxLayout()
+        btn_layout.addWidget(self.midi_rescan_btn)
         btn_layout.addWidget(self.midi_add_btn)
         btn_layout.addWidget(self.midi_diag_btn)
         midi_layout.addLayout(btn_layout)
@@ -413,14 +423,27 @@ class MainWindow(QMainWindow):
     def on_engine_changed(self, index):
         if index == 1:
             engine_type = 'voicemeeter'
+            self.midi_poll_timer.stop()
         elif index == 2:
             engine_type = 'studioone'
+            self.midi_poll_timer.start(1000)
         else:
             engine_type = 'windows'
+            self.midi_poll_timer.stop()
             
         self.config.set('engine_type', engine_type)
         self.audio_manager.set_engine(engine_type)
         self.refresh_apps()
+
+    def poll_midi_status(self):
+        """Continuous live check of MIDI connection state"""
+        if self.config.get('engine_type') != 'studioone':
+            return
+            
+        struct = self.audio_manager.get_structure()
+        new_status = struct.get('status')
+        if new_status != self.midi_status:
+            self.refresh_apps()
 
     def refresh_apps(self):
         # Clear old
@@ -438,41 +461,48 @@ class MainWindow(QMainWindow):
             self.midi_frame.show()
             
             colors = get_theme_colors()
-            
             self.midi_status = struct.get('status', 'not_installed')
+            devices = struct.get('devices', [])
+            port_name = struct.get('port_name', '')
             
             if self.midi_status == 'ready':
-                self.midi_status_lbl.setText("✅ loopMIDI 驅動已就緒")
+                self.midi_status_lbl.setText(f"✅ loopMIDI 虛擬線已就緒\n連線連接埠: {port_name}")
                 self.midi_status_lbl.setStyleSheet(f"color: {colors.success};")
                 self.midi_action_btn.setText("🗑️ 解除安裝 loopMIDI")
-                self.midi_action_btn.setStyleSheet(f"background-color: {colors.error_bg}; color: white; border: none;")
+                self.midi_action_btn.setStyleSheet(f"background-color: {colors.error_bg}; color: white; border: none; border-radius: 5px;")
                 self.midi_add_btn.show()
+                self.midi_rescan_btn.show()
+                self.midi_diag_btn.show()
             elif self.midi_status == 'locked':
-                self.midi_status_lbl.setText("⚠️ 虛擬線被佔用！\n請確定 Studio One 設定「沒有」將 loopMIDI 設為『傳送到 (Send To)』")
+                self.midi_status_lbl.setText("⚠️ MIDI 連接埠被佔用！\n請確認 Studio One 設定中「沒有」將 loopMIDI 勾選為『傳送到 (Send To)』")
                 self.midi_status_lbl.setStyleSheet(f"color: {colors.error};")
-                self.midi_action_btn.setText("🔄 修正完畢，點我重新偵測")
-                self.midi_action_btn.setStyleSheet(f"background-color: #0078D4; color: white; border: none;")
+                self.midi_action_btn.setText("🔄 修正完畢，點我重新連線")
+                self.midi_action_btn.setStyleSheet(f"background-color: #0078D4; color: white; border: none; border-radius: 5px;")
                 self.midi_add_btn.hide()
+                self.midi_rescan_btn.show()
                 self.midi_diag_btn.show()
             elif self.midi_status == 'no_port':
-                self.midi_status_lbl.setText("⚠️ 已經安裝 loopMIDI！\n請點擊下方按鈕開啟它，並按左下角的 [+] 新增虛擬線")
+                dev_desc = ", ".join(devices) if devices else "無可見裝置"
+                self.midi_status_lbl.setText(f"⚠️ 尚未偵測到可用虛擬線！\n(系統可見裝置: {dev_desc})\n請開啟 loopMIDI 並點擊 [+] 新增虛擬埠。")
                 self.midi_status_lbl.setStyleSheet(f"color: #FFA500;") # Orange
-                self.midi_action_btn.setText("🚀 第一步：開啟 loopMIDI 介面")
-                self.midi_action_btn.setStyleSheet(f"background-color: #0078D4; color: white; border: none;")
+                self.midi_action_btn.setText("🚀 開啟 loopMIDI 介面")
+                self.midi_action_btn.setStyleSheet(f"background-color: #0078D4; color: white; border: none; border-radius: 5px;")
                 self.midi_add_btn.hide()
+                self.midi_rescan_btn.show()
                 self.midi_diag_btn.show()
             else:
-                self.midi_status_lbl.setText("❌ 尚未安裝 loopMIDI 驅動")
+                self.midi_status_lbl.setText("❌ 尚未安裝 loopMIDI 驅動\n請點擊下方按鈕進行一鍵安裝")
                 self.midi_status_lbl.setStyleSheet(f"color: {colors.error};")
                 self.midi_action_btn.setText("📥 一鍵安裝 loopMIDI")
-                self.midi_action_btn.setStyleSheet(f"background-color: #0078D4; color: white; border: none;")
+                self.midi_action_btn.setStyleSheet(f"background-color: #0078D4; color: white; border: none; border-radius: 5px;")
                 self.midi_add_btn.hide()
+                self.midi_rescan_btn.hide()
                 self.midi_diag_btn.hide()
                 
             # Render midi signals
             saved_signals = self.config.get('midi_signals', [])
             if not saved_signals and self.midi_status == 'ready':
-                lbl = QLabel("請點選上方的「新增 MIDI 訊號」按鈕")
+                lbl = QLabel("請點選上方的「新增 MIDI 訊號」按鈕開始綁定。")
                 lbl.setAlignment(Qt.AlignCenter)
                 self.scroll_layout.addWidget(lbl)
                 self.app_widgets.append(lbl)
@@ -526,7 +556,6 @@ class MainWindow(QMainWindow):
                 self.app_widgets.append(lbl)
             else:
                 for route_id in saved_devices:
-                    # try to parse name
                     parts = route_id.split('_')
                     if len(parts) == 3:
                         in_id = parts[1]
@@ -541,7 +570,6 @@ class MainWindow(QMainWindow):
                         w.checkbox.stateChanged.connect(self.save_apps)
                         w.delete_btn.show()
                         
-                        # Use default argument capture for lambda in loop
                         w.delete_btn.clicked.connect(lambda checked=False, rid=route_id: self.delete_matrix_route(rid))
                         self.scroll_layout.addWidget(w)
                         self.app_widgets.append(w)
@@ -589,33 +617,6 @@ class MainWindow(QMainWindow):
             self.config.set('selected_apps', saved)
             self.refresh_apps()
 
-    def check_midi_status_poll(self):
-        if self.config.get('engine_type') != 'studioone':
-            self.midi_check_timer.stop()
-            return
-            
-        struct = self.audio_manager.get_structure()
-        current_status = struct.get('status', 'not_installed')
-        
-        # If we were expecting a change and it happened
-        if self.expected_midi_state is not None and current_status == self.expected_midi_state:
-            self.midi_check_timer.stop()
-            self.refresh_apps()
-            if current_status == 'ready':
-                QMessageBox.information(self, "成功", "偵測到 loopMIDI 虛擬線已成功連接！\n現在可以開始綁定訊號了。")
-            elif current_status == 'no_port':
-                QMessageBox.information(self, "提示", "loopMIDI 驅動已經就緒！\n\n接下來請在彈出的 loopMIDI 視窗中：\n1. 點擊左下角的 [+] 號\n2. 看到清單出現 loopMIDI Port 即可！")
-                self.expected_midi_state = 'ready' # Wait for port
-                self.midi_check_timer.start(1000)
-            else:
-                QMessageBox.information(self, "成功", "loopMIDI 已成功解除安裝。")
-            self.expected_midi_state = None
-        # Also auto-update UI if status changes unexpectedly during polling
-        elif current_status == 'ready' and self.expected_midi_state == 'ready':
-            self.midi_check_timer.stop()
-            self.refresh_apps()
-            self.expected_midi_state = None
-
     def handle_midi_action(self):
         import os
         import subprocess
@@ -628,22 +629,20 @@ class MainWindow(QMainWindow):
             installer_path = os.path.join(project_root, 'resources', 'loopMIDISetup.exe')
             if os.path.exists(installer_path):
                 os.startfile(installer_path)
-                self.expected_midi_state = 'no_port' # First expect it to be installed
-                self.midi_check_timer.start(1000)
             else:
                 QMessageBox.warning(self, "錯誤", f"找不到安裝檔，尋找路徑為: {installer_path}")
         elif self.midi_status == 'no_port':
             loopmidi_path = r"C:\Program Files (x86)\Tobias Erichsen\loopMIDI\loopMIDI.exe"
             if os.path.exists(loopmidi_path):
-                subprocess.Popen(loopmidi_path, shell=True)
-                self.expected_midi_state = 'ready'
-                self.midi_check_timer.start(1000)
+                try:
+                    os.startfile(loopmidi_path)
+                except Exception:
+                    subprocess.Popen(loopmidi_path, shell=True)
+            self.refresh_apps()
         else:
-            # Uninstall mode (open appwiz.cpl)
-            QMessageBox.information(self, "提示", "請在即將開啟的視窗中找到「loopMIDI」，點擊解除安裝。\n程式會在背景自動偵測解除安裝進度。")
+            # Uninstall mode
+            QMessageBox.information(self, "提示", "請在即將開啟的視窗中找到「loopMIDI」，點擊解除安裝。")
             subprocess.Popen("appwiz.cpl", shell=True)
-            self.expected_midi_state = 'not_installed'
-            self.midi_check_timer.start(1000)
 
     def run_midi_diagnostic(self):
         import os

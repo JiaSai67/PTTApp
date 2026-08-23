@@ -182,73 +182,169 @@ class VoicemeeterEngine(BaseAudioEngine):
 class StudioOneEngine(BaseAudioEngine):
     def __init__(self):
         self.out_handle = None
+        self.connected_port_name = ""
+        self.last_devices = []
+        self._setup_winmm()
         self._init_port()
+
+    def _setup_winmm(self):
+        import ctypes
+        self.winmm = ctypes.windll.winmm
+        
+        class MIDIOUTCAPSW(ctypes.Structure):
+            _fields_ = [
+                ("wMid", ctypes.c_ushort),
+                ("wPid", ctypes.c_ushort),
+                ("vDriverVersion", ctypes.c_uint),
+                ("szPname", ctypes.c_wchar * 32),
+                ("wTechnology", ctypes.c_ushort),
+                ("wVoices", ctypes.c_ushort),
+                ("wNotes", ctypes.c_ushort),
+                ("wChannelMask", ctypes.c_ushort),
+                ("dwSupport", ctypes.c_uint),
+            ]
+        self.MIDIOUTCAPSW = MIDIOUTCAPSW
+
+        class MIDIOUTCAPSA(ctypes.Structure):
+            _fields_ = [
+                ("wMid", ctypes.c_ushort),
+                ("wPid", ctypes.c_ushort),
+                ("vDriverVersion", ctypes.c_uint),
+                ("szPname", ctypes.c_char * 32),
+                ("wTechnology", ctypes.c_ushort),
+                ("wVoices", ctypes.c_ushort),
+                ("wNotes", ctypes.c_ushort),
+                ("wChannelMask", ctypes.c_ushort),
+                ("dwSupport", ctypes.c_uint),
+            ]
+        self.MIDIOUTCAPSA = MIDIOUTCAPSA
+
+        try:
+            self.winmm.midiOutGetNumDevs.restype = ctypes.c_uint
+            self.winmm.midiOutGetDevCapsW.argtypes = [ctypes.c_size_t, ctypes.POINTER(MIDIOUTCAPSW), ctypes.c_uint]
+            self.winmm.midiOutGetDevCapsW.restype = ctypes.c_uint
+            self.winmm.midiOutGetDevCapsA.argtypes = [ctypes.c_size_t, ctypes.POINTER(MIDIOUTCAPSA), ctypes.c_uint]
+            self.winmm.midiOutGetDevCapsA.restype = ctypes.c_uint
+            self.winmm.midiOutOpen.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_uint, ctypes.c_size_t, ctypes.c_size_t, ctypes.c_uint]
+            self.winmm.midiOutOpen.restype = ctypes.c_uint
+            self.winmm.midiOutShortMsg.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+            self.winmm.midiOutShortMsg.restype = ctypes.c_uint
+            self.winmm.midiOutClose.argtypes = [ctypes.c_void_p]
+            self.winmm.midiOutClose.restype = ctypes.c_uint
+        except Exception as e:
+            log_debug(f"winmm setup error: {e}")
+
+    def enumerate_devices(self):
+        """Enumerate all available MIDI Out devices with Unicode & ANSI fallback"""
+        devices = []
+        import ctypes
+        try:
+            num_devs = self.winmm.midiOutGetNumDevs()
+            for i in range(num_devs):
+                name = ""
+                # Try Unicode first
+                capsW = self.MIDIOUTCAPSW()
+                resW = self.winmm.midiOutGetDevCapsW(i, ctypes.byref(capsW), ctypes.sizeof(capsW))
+                if resW == 0 and capsW.szPname:
+                    name = capsW.szPname.strip()
+                else:
+                    # Fallback to ANSI
+                    capsA = self.MIDIOUTCAPSA()
+                    resA = self.winmm.midiOutGetDevCapsA(i, ctypes.byref(capsA), ctypes.sizeof(capsA))
+                    if resA == 0 and capsA.szPname:
+                        name = capsA.szPname.decode('mbcs', errors='ignore').strip()
+
+                if name:
+                    devices.append({'id': i, 'name': name})
+        except Exception as e:
+            log_debug(f"enumerate_devices error: {e}")
+        self.last_devices = devices
+        return devices
 
     def _init_port(self):
         if self.out_handle is not None:
             return 'ready'
-        try:
-            import ctypes
-            winmm = ctypes.windll.winmm
-            
-            class MIDIOUTCAPSW(ctypes.Structure):
-                _fields_ = [
-                    ("wMid", ctypes.c_ushort),
-                    ("wPid", ctypes.c_ushort),
-                    ("vDriverVersion", ctypes.c_uint),
-                    ("szPname", ctypes.c_wchar * 32),
-                    ("wTechnology", ctypes.c_ushort),
-                    ("wVoices", ctypes.c_ushort),
-                    ("wNotes", ctypes.c_ushort),
-                    ("wChannelMask", ctypes.c_ushort),
-                    ("dwSupport", ctypes.c_uint),
-                ]
-                
-            num_devs = winmm.midiOutGetNumDevs()
-            caps = MIDIOUTCAPSW()
-            
-            target_id = -1
-            for i in range(num_devs):
-                if winmm.midiOutGetDevCapsW(i, ctypes.byref(caps), ctypes.sizeof(caps)) == 0:
-                    name = caps.szPname
-                    if 'loopmidi' in name.lower():
-                        target_id = i
-                        break
-                        
-            if target_id != -1:
-                hMidiOut = ctypes.c_void_p()
-                res = winmm.midiOutOpen(ctypes.byref(hMidiOut), target_id, 0, 0, 0)
-                if res == 0:
-                    self.out_handle = hMidiOut
-                    return 'ready'
-                else:
-                    return 'locked'
-        except Exception as e:
-            import sys
-            print(f"[MIDI DEBUG] Exception in native MIDI init: {e}", file=sys.stderr)
-            
-        return 'error'
+
+        import ctypes
+        devices = self.enumerate_devices()
+        if not devices:
+            return 'error'
+
+        # Filter out built-in synth devices that cannot be virtual loopback cables
+        ignore_keywords = ['wavetable', 'synth', 'mapper', 'synthesizer', 'microsoft gs']
+        candidates = []
+        for dev in devices:
+            dname = dev['name'].lower()
+            if not any(k in dname for k in ignore_keywords):
+                candidates.append(dev)
+
+        if not candidates:
+            return 'no_port'
+
+        # Prioritize 'loopmidi' -> 'loop' -> 'virtual' -> any other candidate
+        def match_score(dev):
+            dn = dev['name'].lower()
+            if 'loopmidi' in dn: return 3
+            if 'loop' in dn: return 2
+            if 'virtual' in dn or 'cable' in dn: return 1
+            return 0
+
+        candidates.sort(key=match_score, reverse=True)
+        best_dev = candidates[0]
+
+        hMidiOut = ctypes.c_void_p()
+        res = self.winmm.midiOutOpen(ctypes.byref(hMidiOut), best_dev['id'], 0, 0, 0)
+        if res == 0:
+            self.out_handle = hMidiOut
+            self.connected_port_name = best_dev['name']
+            log_debug(f"Successfully opened MIDI port: {best_dev['name']} (ID: {best_dev['id']})")
+            return 'ready'
+        elif res == 4: # MMSYSERR_ALLOCATED
+            log_debug(f"MIDI Port {best_dev['name']} is locked (MMSYSERR_ALLOCATED)")
+            return 'locked'
+        else:
+            log_debug(f"midiOutOpen failed on {best_dev['name']} with error code: {res}")
+            return 'error'
 
     def get_structure(self):
         status = self._init_port()
+        devices = self.enumerate_devices()
+        dev_names = [d['name'] for d in devices]
+
         if status == 'ready':
-            return {'type': 'midi', 'status': 'ready'}
+            return {
+                'type': 'midi',
+                'status': 'ready',
+                'port_name': self.connected_port_name,
+                'devices': dev_names
+            }
         elif status == 'locked':
-            return {'type': 'midi', 'status': 'locked'}
-            
+            return {
+                'type': 'midi',
+                'status': 'locked',
+                'devices': dev_names
+            }
+
         import os
         loopmidi_path = r"C:\Program Files (x86)\Tobias Erichsen\loopMIDI\loopMIDI.exe"
         if os.path.exists(loopmidi_path):
-            return {'type': 'midi', 'status': 'no_port'}
-            
-        return {'type': 'midi', 'status': 'not_installed'}
+            return {
+                'type': 'midi',
+                'status': 'no_port',
+                'devices': dev_names
+            }
+
+        return {
+            'type': 'midi',
+            'status': 'not_installed',
+            'devices': dev_names
+        }
 
     def set_mute(self, target_ids, mute: bool):
         if self._init_port() != 'ready':
             return
             
         import ctypes
-        winmm = ctypes.windll.winmm
         
         for sig in target_ids:
             if not isinstance(sig, dict):
@@ -266,53 +362,85 @@ class StudioOneEngine(BaseAudioEngine):
                 v = 127 if mute else 0
                 msg = status | (val << 8) | (v << 16)
                 
-            winmm.midiOutShortMsg(self.out_handle, msg)
+            self.winmm.midiOutShortMsg(self.out_handle, msg)
 
     def generate_midi_diagnostic(self):
         log = []
-        log.append("=== MIDI Diagnostics ===")
+        log.append("==================================================")
+        log.append("             PTTApp MIDI 環境診斷報告              ")
+        log.append("==================================================")
         import sys
-        import ctypes
+        import platform
         import struct
-        log.append(f"Python: {sys.version}")
-        log.append(f"Architecture: {struct.calcsize('P') * 8}-bit")
+        import datetime
+        import subprocess
+        log.append(f"診斷時間: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        log.append(f"作業系統: Windows {platform.release()} ({platform.version()}) - {platform.machine()}")
+        log.append(f"Python 版本: {sys.version}")
+        log.append(f"Python 位元: {struct.calcsize('P') * 8}-bit")
+        log.append(f"執行路徑: {sys.executable}")
+        log.append("")
+        
+        # Check loopMIDI Process
+        log.append("--- [1] loopMIDI 執行狀態 ---")
         try:
-            winmm = ctypes.windll.winmm
-            num_devs = winmm.midiOutGetNumDevs()
-            log.append(f"midiOutGetNumDevs() = {num_devs}")
+            cmd = 'tasklist /FI "IMAGENAME eq loopMIDI.exe" /NH'
+            out = subprocess.check_output(cmd, shell=True, text=True, errors='ignore')
+            if "loopMIDI.exe" in out:
+                log.append("[OK] loopMIDI.exe 正在背景執行中。")
+            else:
+                log.append("[WARN] loopMIDI.exe 目前未在執行中！請開啟 loopMIDI。")
+        except Exception as e:
+            log.append(f"檢查行程失敗: {e}")
+
+        # Check loopMIDI Install
+        import os
+        loopmidi_path = r"C:\Program Files (x86)\Tobias Erichsen\loopMIDI\loopMIDI.exe"
+        log.append(f"安裝路徑 ({loopmidi_path}): {'[OK] 已存在' if os.path.exists(loopmidi_path) else '[ERROR] 不存在'}")
+        log.append("")
+
+        # Check WinMM Devices
+        log.append("--- [2] Windows 系統 MIDI 輸出裝置清單 (WinMM) ---")
+        try:
+            import ctypes
+            num_devs = self.winmm.midiOutGetNumDevs()
+            log.append(f"偵測到的 MIDI 輸出裝置數量 (midiOutGetNumDevs): {num_devs}")
             
-            class MIDIOUTCAPSW(ctypes.Structure):
-                _fields_ = [
-                    ("wMid", ctypes.c_ushort),
-                    ("wPid", ctypes.c_ushort),
-                    ("vDriverVersion", ctypes.c_uint),
-                    ("szPname", ctypes.c_wchar * 32),
-                    ("wTechnology", ctypes.c_ushort),
-                    ("wVoices", ctypes.c_ushort),
-                    ("wNotes", ctypes.c_ushort),
-                    ("wChannelMask", ctypes.c_ushort),
-                    ("dwSupport", ctypes.c_uint),
-                ]
-            
-            caps = MIDIOUTCAPSW()
             for i in range(num_devs):
-                res = winmm.midiOutGetDevCapsW(i, ctypes.byref(caps), ctypes.sizeof(caps))
-                if res == 0:
-                    log.append(f"Device {i}: '{caps.szPname}'")
-                    if 'loopmidi' in caps.szPname.lower():
-                        hMidiOut = ctypes.c_void_p()
-                        open_res = winmm.midiOutOpen(ctypes.byref(hMidiOut), i, 0, 0, 0)
-                        log.append(f"  -> Attempt to open returned: {open_res} (0=Success, 4=MMSYSERR_ALLOCATED)")
-                        if open_res == 0:
-                            winmm.midiOutClose(hMidiOut)
+                capsW = self.MIDIOUTCAPSW()
+                resW = self.winmm.midiOutGetDevCapsW(i, ctypes.byref(capsW), ctypes.sizeof(capsW))
+                nameW = capsW.szPname if resW == 0 else f"<Unicode 失敗: 代碼 {resW}>"
+                
+                capsA = self.MIDIOUTCAPSA()
+                resA = self.winmm.midiOutGetDevCapsA(i, ctypes.byref(capsA), ctypes.sizeof(capsA))
+                nameA = capsA.szPname.decode('mbcs', errors='ignore') if resA == 0 else f"<ANSI 失敗: 代碼 {resA}>"
+                
+                log.append(f"  [裝置 ID {i}]:")
+                log.append(f"     名稱 (Unicode): '{nameW}'")
+                log.append(f"     名稱 (ANSI):    '{nameA}'")
+                
+                # Test opening
+                hMidiOut = ctypes.c_void_p()
+                open_res = self.winmm.midiOutOpen(ctypes.byref(hMidiOut), i, 0, 0, 0)
+                if open_res == 0:
+                    log.append(f"     連接測試: [OK] 成功開啟連接埠 (Handle: {hMidiOut.value})")
+                    self.winmm.midiOutClose(hMidiOut)
+                elif open_res == 4:
+                    log.append(f"     連接測試: [WARN] MMSYSERR_ALLOCATED (4) - 埠已被其他程式獨佔 (如 Studio One Send To)")
                 else:
-                    log.append(f"Device {i}: midiOutGetDevCapsW failed with code {res}")
+                    log.append(f"     連接測試: [ERROR] 開啟失敗，錯誤代碼: {open_res}")
         except Exception as e:
             import traceback
-            log.append(f"Exception during diagnostic:\n{traceback.format_exc()}")
-            
+            log.append(f"WinMM 檢測過程發生錯誤:\n{traceback.format_exc()}")
+
+        log.append("")
+        log.append("==================================================")
+        log.append("診斷結束。請將以上內容提供給開發者分析。")
+        log.append("==================================================")
+        
         import os
-        log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'midi_diagnostic.txt')
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        log_path = os.path.join(project_root, 'midi_diagnostic.txt')
         with open(log_path, 'w', encoding='utf-8') as f:
             f.write('\n'.join(log))
             
@@ -320,8 +448,10 @@ class StudioOneEngine(BaseAudioEngine):
 
     def cleanup(self):
         if self.out_handle:
-            import ctypes
-            ctypes.windll.winmm.midiOutClose(self.out_handle)
+            try:
+                self.winmm.midiOutClose(self.out_handle)
+            except Exception:
+                pass
             self.out_handle = None
 
 

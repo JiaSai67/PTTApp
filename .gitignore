@@ -12,3 +12,7 @@ settings.json
 .idea/
 *.raw.png
 *_raw.jpg
+*_diagnostic.txt
+scratch_*.py
+git_status.txt
+status_check.txt

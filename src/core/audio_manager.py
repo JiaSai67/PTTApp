@@ -400,13 +400,19 @@ class StudioOneEngine(BaseAudioEngine):
                 self.send_midi_message(sig, mute)
 
     def send_test_signal(self):
-        sig = {'type': 'cc', 'channel': 0, 'value': 14}
-        success, desc = self.send_midi_message(sig, True)
-        if success:
-            import time
-            time.sleep(0.05)
-            self.send_midi_message(sig, False)
-        return success, desc
+        # Send both CC and Note On so whether Studio One created a Control Surface or Keyboard, it captures!
+        sig_cc = {'type': 'cc', 'channel': 0, 'value': 14}
+        sig_note = {'type': 'note', 'channel': 0, 'value': 60}
+        
+        s1, d1 = self.send_midi_message(sig_cc, True)
+        s2, d2 = self.send_midi_message(sig_note, True)
+        
+        import time
+        time.sleep(0.05)
+        self.send_midi_message(sig_cc, False)
+        self.send_midi_message(sig_note, False)
+        
+        return (s1 or s2), f"CC:14 及 Note:60 (C4) 至「{self.connected_port_name}」"
 
     def generate_midi_diagnostic(self):
         log = []

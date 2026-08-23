@@ -366,29 +366,47 @@ class StudioOneEngine(BaseAudioEngine):
             'loopmidi_running': lm_running
         }
 
-    def set_mute(self, target_ids, mute: bool):
+    def send_midi_message(self, sig, mute: bool):
         if self._init_port() != 'ready':
-            return
-            
-        import ctypes
+            return False, "MIDI 埠尚未就緒"
+
+        channel = sig.get('channel', 0)
+        val = sig.get('value', 14)
         
+        if sig.get('type') == 'note':
+            status = 0x90 + channel if mute else 0x80 + channel
+            vel = 127 if mute else 0
+            msg = status | (val << 8) | (vel << 16)
+            desc = f"Note {'ON' if mute else 'OFF'} (Ch:{channel}, Note:{val}, Vel:{vel})"
+        else:
+            status = 0xB0 + channel
+            v = 127 if mute else 0
+            msg = status | (val << 8) | (v << 16)
+            desc = f"CC (Ch:{channel}, CC:{val}, Val:{v})"
+            
+        res = self.winmm.midiOutShortMsg(self.out_handle, msg)
+        if res != 0:
+            log_debug(f"midiOutShortMsg failed with code {res}, attempting auto-reconnect...")
+            self.cleanup()
+            if self._init_port() == 'ready':
+                res = self.winmm.midiOutShortMsg(self.out_handle, msg)
+
+        log_debug(f"MIDI Send: {desc} -> ReturnCode: {res}")
+        return (res == 0), desc
+
+    def set_mute(self, target_ids, mute: bool):
         for sig in target_ids:
-            if not isinstance(sig, dict):
-                continue
-            
-            channel = sig.get('channel', 0)
-            val = sig.get('value', 14)
-            
-            if sig.get('type') == 'note':
-                status = 0x90 + channel if mute else 0x80 + channel
-                vel = 127 if mute else 0
-                msg = status | (val << 8) | (vel << 16)
-            else:
-                status = 0xB0 + channel
-                v = 127 if mute else 0
-                msg = status | (val << 8) | (v << 16)
-                
-            self.winmm.midiOutShortMsg(self.out_handle, msg)
+            if isinstance(sig, dict):
+                self.send_midi_message(sig, mute)
+
+    def send_test_signal(self):
+        sig = {'type': 'cc', 'channel': 0, 'value': 14}
+        success, desc = self.send_midi_message(sig, True)
+        if success:
+            import time
+            time.sleep(0.05)
+            self.send_midi_message(sig, False)
+        return success, desc
 
     def generate_midi_diagnostic(self):
         log = []
@@ -606,6 +624,12 @@ class AudioManager:
         if hasattr(engine, 'generate_midi_diagnostic'):
             return engine.generate_midi_diagnostic()
         return None
+
+    def send_test_signal(self):
+        engine = self.get_current_engine()
+        if hasattr(engine, 'send_test_signal'):
+            return engine.send_test_signal()
+        return False, "目前引擎不支援 MIDI 測試"
 
     def cleanup(self):
         for engine in self.engines.values():

@@ -231,7 +231,7 @@ class AppItemWidget(QWidget):
         layout.addWidget(self.delete_btn)
 
 
-VERSION = "1.0.7"
+VERSION = "1.0.8"
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -329,21 +329,33 @@ class MainWindow(QMainWindow):
         self.midi_rescan_btn.clicked.connect(self.refresh_apps)
         
         self.midi_add_btn = QPushButton("➕ 新增 MIDI 訊號")
-        self.midi_add_btn.setFixedSize(140, 34)
+        self.midi_add_btn.setFixedSize(130, 32)
         self.midi_add_btn.clicked.connect(self.add_midi_signal)
         
+        self.midi_test_btn = QPushButton("⚡ 測試發送 CC 14")
+        self.midi_test_btn.setFixedSize(130, 32)
+        self.midi_test_btn.clicked.connect(self.send_test_midi)
+        
+        self.midi_rescan_btn = QPushButton("🔄 重新整理")
+        self.midi_rescan_btn.setFixedSize(110, 32)
+        self.midi_rescan_btn.clicked.connect(self.refresh_apps)
+        
         self.midi_diag_btn = QPushButton("🛠️ 診斷報告")
-        self.midi_diag_btn.setFixedSize(110, 34)
+        self.midi_diag_btn.setFixedSize(110, 32)
         self.midi_diag_btn.clicked.connect(self.run_midi_diagnostic)
         
         midi_layout.addWidget(self.midi_status_lbl)
         midi_layout.addWidget(self.midi_action_btn, alignment=Qt.AlignCenter)
         
-        btn_layout = QHBoxLayout()
-        btn_layout.addWidget(self.midi_rescan_btn)
-        btn_layout.addWidget(self.midi_add_btn)
-        btn_layout.addWidget(self.midi_diag_btn)
-        midi_layout.addLayout(btn_layout)
+        btn_layout1 = QHBoxLayout()
+        btn_layout1.addWidget(self.midi_add_btn)
+        btn_layout1.addWidget(self.midi_test_btn)
+        midi_layout.addLayout(btn_layout1)
+        
+        btn_layout2 = QHBoxLayout()
+        btn_layout2.addWidget(self.midi_rescan_btn)
+        btn_layout2.addWidget(self.midi_diag_btn)
+        midi_layout.addLayout(btn_layout2)
         
         self.midi_frame.hide()
         main_layout.addWidget(self.midi_frame)
@@ -471,6 +483,7 @@ class MainWindow(QMainWindow):
                 self.midi_action_btn.setText("🗑️ 解除安裝 loopMIDI")
                 self.midi_action_btn.setStyleSheet(f"background-color: {colors.error_bg}; color: white; border: none; border-radius: 5px;")
                 self.midi_add_btn.show()
+                self.midi_test_btn.show()
                 self.midi_rescan_btn.show()
                 self.midi_diag_btn.show()
             elif self.midi_status == 'locked':
@@ -479,6 +492,7 @@ class MainWindow(QMainWindow):
                 self.midi_action_btn.setText("🔄 修正完畢，點我重新連線")
                 self.midi_action_btn.setStyleSheet(f"background-color: #0078D4; color: white; border: none; border-radius: 5px;")
                 self.midi_add_btn.hide()
+                self.midi_test_btn.hide()
                 self.midi_rescan_btn.show()
                 self.midi_diag_btn.show()
             elif self.midi_status == 'no_port':
@@ -512,6 +526,7 @@ class MainWindow(QMainWindow):
                 self.midi_status_lbl.setStyleSheet(f"color: #FFA500;") # Orange
                 self.midi_action_btn.setStyleSheet(f"background-color: #0078D4; color: white; border: none; border-radius: 5px;")
                 self.midi_add_btn.hide()
+                self.midi_test_btn.hide()
                 self.midi_rescan_btn.show()
                 self.midi_diag_btn.show()
             else:
@@ -520,6 +535,7 @@ class MainWindow(QMainWindow):
                 self.midi_action_btn.setText("📥 一鍵安裝 loopMIDI")
                 self.midi_action_btn.setStyleSheet(f"background-color: #0078D4; color: white; border: none; border-radius: 5px;")
                 self.midi_add_btn.hide()
+                self.midi_test_btn.hide()
                 self.midi_rescan_btn.hide()
                 self.midi_diag_btn.hide()
                 
@@ -685,6 +701,20 @@ class MainWindow(QMainWindow):
             subprocess.Popen(['notepad.exe', log_path])
         else:
             QMessageBox.warning(self, "錯誤", "產生檢測報告失敗，請確認程式是否有寫入權限。")
+
+    def send_test_midi(self):
+        success, desc = self.audio_manager.send_test_signal()
+        if success:
+            QMessageBox.information(
+                self,
+                "發送成功",
+                f"✅ 已成功發送 MIDI 測試訊號！\n{desc}\n\n"
+                f"請檢查：\n"
+                f"1. loopMIDI 視窗中的 Total data 是否有增加。\n"
+                f"2. Studio One 的 MIDI 學習面板是否有捕捉到按鈕。"
+            )
+        else:
+            QMessageBox.warning(self, "發送失敗", f"❌ 發送 MIDI 測試訊號失敗:\n{desc}")
 
     def save_mode(self):
         mode = 'ptt' if self.mode_ptt_radio.isChecked() else 'toggle'

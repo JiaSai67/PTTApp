@@ -26,14 +26,15 @@ def test_engine():
     assert os.path.exists(diag_path), "Diagnostic file must exist"
     
     with open(diag_path, 'r', encoding='utf-8') as f:
-        content = f.read()
-    print("Diagnostic content preview:")
+        lines = f.readlines()
+    print("Diagnostic content preview (first 10 lines):")
     print("-" * 40)
-    print(content[:500] + "...")
+    for l in lines[:10]:
+        print(l.strip())
     print("-" * 40)
     
     engine.cleanup()
-    print("\n✅ All self-checks PASSED successfully!")
+    print("\n[OK] All self-checks PASSED successfully!")
 
 if __name__ == "__main__":
     test_engine()

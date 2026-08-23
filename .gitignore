@@ -1,5 +1,14 @@
 __pycache__/
 *.pyc
-app.log
+*.pyo
+*.pyd
+*.log
+.venv/
+venv/
+ENV/
+.env
 settings.json
 .vscode/
+.idea/
+*.raw.png
+*_raw.jpg

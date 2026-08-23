@@ -5,13 +5,7 @@ import datetime
 warnings.filterwarnings("ignore", category=UserWarning, module='pycaw')
 
 def log_debug(msg):
-    try:
-        log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), "ptt_debug.log")
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
-    except Exception:
-        pass
-
+    print(f"[DEBUG] {msg}")
 class BaseAudioEngine:
     def get_structure(self):
         """Returns structure dict for UI rendering"""

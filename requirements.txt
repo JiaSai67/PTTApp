@@ -3,5 +3,3 @@ PySide6-Fluent-Widgets
 pynput
 pycaw
 pywin32
-mido
-python-rtmidi

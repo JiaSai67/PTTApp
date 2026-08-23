@@ -181,40 +181,52 @@ class VoicemeeterEngine(BaseAudioEngine):
 
 class StudioOneEngine(BaseAudioEngine):
     def __init__(self):
-        self.outport = None
+        self.out_handle = None
         self._init_port()
 
     def _init_port(self):
-        if self.outport is not None:
+        if self.out_handle is not None:
             return True
         try:
-            import mido
-            import sys
+            import ctypes
+            winmm = ctypes.windll.winmm
             
-            try:
-                mido.set_backend('mido.backends.rtmidi')
-                ports = mido.get_output_names()
-                print(f"[MIDI DEBUG] Available ports: {ports}", file=sys.stderr)
-            except Exception as e:
-                print(f"[MIDI DEBUG] Failed to get ports: {e}", file=sys.stderr)
-                return False
+            class MIDIOUTCAPSW(ctypes.Structure):
+                _fields_ = [
+                    ("wMid", ctypes.c_ushort),
+                    ("wPid", ctypes.c_ushort),
+                    ("vDriverVersion", ctypes.c_uint),
+                    ("szPname", ctypes.c_wchar * 32),
+                    ("wTechnology", ctypes.c_ushort),
+                    ("wVoices", ctypes.c_ushort),
+                    ("wNotes", ctypes.c_ushort),
+                    ("wChannelMask", ctypes.c_ushort),
+                    ("dwSupport", ctypes.c_uint),
+                ]
                 
-            for p in ports:
-                if 'loopmidi' in p.lower():
-                    try:
-                        self.outport = mido.open_output(p)
-                        print(f"[MIDI DEBUG] Successfully opened: {p}", file=sys.stderr)
-                        return True
-                    except Exception as e:
-                        print(f"[MIDI DEBUG] Failed to open {p}: {e}", file=sys.stderr)
-            print(f"[MIDI DEBUG] Could not find any port containing 'loopmidi'.", file=sys.stderr)
+            num_devs = winmm.midiOutGetNumDevs()
+            caps = MIDIOUTCAPSW()
+            
+            target_id = -1
+            for i in range(num_devs):
+                if winmm.midiOutGetDevCapsW(i, ctypes.byref(caps), ctypes.sizeof(caps)) == 0:
+                    name = caps.szPname
+                    if 'loopmidi' in name.lower():
+                        target_id = i
+                        break
+                        
+            if target_id != -1:
+                hMidiOut = ctypes.c_void_p()
+                if winmm.midiOutOpen(ctypes.byref(hMidiOut), target_id, 0, 0, 0) == 0:
+                    self.out_handle = hMidiOut
+                    return True
         except Exception as e:
             import sys
-            print(f"[MIDI DEBUG] General exception: {e}", file=sys.stderr)
+            print(f"[MIDI DEBUG] Exception in native MIDI init: {e}", file=sys.stderr)
+            
         return False
 
     def get_structure(self):
-        # We can re-check the port to see if it's available
         if self._init_port():
             return {'type': 'midi', 'status': 'ready'}
             
@@ -229,33 +241,32 @@ class StudioOneEngine(BaseAudioEngine):
         if not self._init_port():
             return
             
-        try:
-            import mido
-            for sig in target_ids:
-                if not isinstance(sig, dict):
-                    continue
-                
-                channel = sig.get('channel', 0)
-                val = sig.get('value', 14)
-                if sig.get('type') == 'note':
-                    note_type = 'note_on' if mute else 'note_off'
-                    vel = 127 if mute else 0
-                    msg = mido.Message(note_type, channel=channel, note=val, velocity=vel)
-                else:
-                    v = 127 if mute else 0
-                    msg = mido.Message('control_change', channel=channel, control=val, value=v)
-                self.outport.send(msg)
+        import ctypes
+        winmm = ctypes.windll.winmm
+        
+        for sig in target_ids:
+            if not isinstance(sig, dict):
+                continue
             
-        except Exception as e:
-            pass
+            channel = sig.get('channel', 0)
+            val = sig.get('value', 14)
+            
+            if sig.get('type') == 'note':
+                status = 0x90 + channel if mute else 0x80 + channel
+                vel = 127 if mute else 0
+                msg = status | (val << 8) | (vel << 16)
+            else:
+                status = 0xB0 + channel
+                v = 127 if mute else 0
+                msg = status | (val << 8) | (v << 16)
+                
+            winmm.midiOutShortMsg(self.out_handle, msg)
 
     def cleanup(self):
-        if self.outport:
-            try:
-                self.outport.close()
-            except:
-                pass
-            self.outport = None
+        if self.out_handle:
+            import ctypes
+            ctypes.windll.winmm.midiOutClose(self.out_handle)
+            self.out_handle = None
 
 
 class AudioManager:

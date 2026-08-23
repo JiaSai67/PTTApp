@@ -189,13 +189,28 @@ class StudioOneEngine(BaseAudioEngine):
             return True
         try:
             import mido
-            ports = mido.get_output_names()
+            import sys
+            
+            try:
+                mido.set_backend('mido.backends.rtmidi')
+                ports = mido.get_output_names()
+                print(f"[MIDI DEBUG] Available ports: {ports}", file=sys.stderr)
+            except Exception as e:
+                print(f"[MIDI DEBUG] Failed to get ports: {e}", file=sys.stderr)
+                return False
+                
             for p in ports:
-                if 'loopMIDI' in p:
-                    self.outport = mido.open_output(p)
-                    return True
+                if 'loopmidi' in p.lower():
+                    try:
+                        self.outport = mido.open_output(p)
+                        print(f"[MIDI DEBUG] Successfully opened: {p}", file=sys.stderr)
+                        return True
+                    except Exception as e:
+                        print(f"[MIDI DEBUG] Failed to open {p}: {e}", file=sys.stderr)
+            print(f"[MIDI DEBUG] Could not find any port containing 'loopmidi'.", file=sys.stderr)
         except Exception as e:
-            pass
+            import sys
+            print(f"[MIDI DEBUG] General exception: {e}", file=sys.stderr)
         return False
 
     def get_structure(self):

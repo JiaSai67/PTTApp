@@ -179,21 +179,23 @@ class MidiSignalWidget(QWidget):
         
         lbl_text = f"{signal_data.get('name', '')}  (內部代碼: CC {signal_data.get('value', 0)})"
         self.name_lbl = QLabel(lbl_text)
-        self.name_lbl.setFont(get_font(11, bold=True))
+        self.name_lbl.setFont(get_font(10, bold=True))
         
-        self.edit_btn = QPushButton("✏️ 編輯名稱")
-        self.edit_btn.setFixedSize(95, 34)
+        self.edit_btn = QPushButton("✏️ 編輯")
+        self.edit_btn.setFixedSize(70, 28)
+        self.edit_btn.setFont(get_font(9))
         self.edit_btn.setStyleSheet(f"background-color: #444; color: white; border: none; border-radius: 4px;")
         
         self.delete_btn = QPushButton("🗑️ 刪除")
-        self.delete_btn.setFixedSize(70, 34)
+        self.delete_btn.setFixedSize(60, 28)
+        self.delete_btn.setFont(get_font(9))
         self.delete_btn.setStyleSheet(f"background-color: {colors.error_bg}; color: white; border: none; border-radius: 4px;")
         
         layout.addWidget(self.checkbox)
-        layout.addSpacing(10)
+        layout.addSpacing(8)
         layout.addWidget(self.name_lbl, stretch=1)
         layout.addWidget(self.edit_btn)
-        layout.addSpacing(5)
+        layout.addSpacing(4)
         layout.addWidget(self.delete_btn)
 
 class AppItemWidget(QWidget):
@@ -231,7 +233,7 @@ class AppItemWidget(QWidget):
         layout.addWidget(self.delete_btn)
 
 
-VERSION = "1.0.9"
+VERSION = "1.1.0"
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -312,50 +314,48 @@ class MainWindow(QMainWindow):
         # MIDI Controls (hidden by default, shown for Studio One)
         self.midi_frame = QWidget()
         midi_layout = QVBoxLayout(self.midi_frame)
-        midi_layout.setAlignment(Qt.AlignCenter)
+        midi_layout.setContentsMargins(0, 0, 0, 4)
+        midi_layout.setSpacing(4)
         
         self.midi_status_lbl = QLabel()
-        self.midi_status_lbl.setFont(get_font(11, bold=True))
+        self.midi_status_lbl.setFont(get_font(10, bold=True))
         self.midi_status_lbl.setAlignment(Qt.AlignCenter)
         self.midi_status_lbl.setWordWrap(True)
         
         self.midi_action_btn = QPushButton()
         self.midi_action_btn.setFont(get_font(10, bold=True))
-        self.midi_action_btn.setFixedSize(260, 38)
+        self.midi_action_btn.setFixedSize(260, 34)
         self.midi_action_btn.clicked.connect(self.handle_midi_action)
         
-        self.midi_rescan_btn = QPushButton("🔄 重新整理")
-        self.midi_rescan_btn.setFixedSize(110, 34)
-        self.midi_rescan_btn.clicked.connect(self.refresh_apps)
+        self.midi_btn_widget = QWidget()
+        btn_layout = QHBoxLayout(self.midi_btn_widget)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(6)
         
-        self.midi_add_btn = QPushButton("➕ 新增 MIDI 訊號")
-        self.midi_add_btn.setFixedSize(130, 32)
+        self.midi_add_btn = QPushButton("➕ 新增訊號")
+        self.midi_add_btn.setFixedHeight(30)
         self.midi_add_btn.clicked.connect(self.add_midi_signal)
         
-        self.midi_test_btn = QPushButton("⚡ 測試發送 CC 14")
-        self.midi_test_btn.setFixedSize(130, 32)
+        self.midi_test_btn = QPushButton("⚡ 測試訊號")
+        self.midi_test_btn.setFixedHeight(30)
         self.midi_test_btn.clicked.connect(self.send_test_midi)
         
         self.midi_rescan_btn = QPushButton("🔄 重新整理")
-        self.midi_rescan_btn.setFixedSize(110, 32)
+        self.midi_rescan_btn.setFixedHeight(30)
         self.midi_rescan_btn.clicked.connect(self.refresh_apps)
         
         self.midi_diag_btn = QPushButton("🛠️ 診斷報告")
-        self.midi_diag_btn.setFixedSize(110, 32)
+        self.midi_diag_btn.setFixedHeight(30)
         self.midi_diag_btn.clicked.connect(self.run_midi_diagnostic)
+        
+        btn_layout.addWidget(self.midi_add_btn)
+        btn_layout.addWidget(self.midi_test_btn)
+        btn_layout.addWidget(self.midi_rescan_btn)
+        btn_layout.addWidget(self.midi_diag_btn)
         
         midi_layout.addWidget(self.midi_status_lbl)
         midi_layout.addWidget(self.midi_action_btn, alignment=Qt.AlignCenter)
-        
-        btn_layout1 = QHBoxLayout()
-        btn_layout1.addWidget(self.midi_add_btn)
-        btn_layout1.addWidget(self.midi_test_btn)
-        midi_layout.addLayout(btn_layout1)
-        
-        btn_layout2 = QHBoxLayout()
-        btn_layout2.addWidget(self.midi_rescan_btn)
-        btn_layout2.addWidget(self.midi_diag_btn)
-        midi_layout.addLayout(btn_layout2)
+        midi_layout.addWidget(self.midi_btn_widget)
         
         self.midi_frame.hide()
         main_layout.addWidget(self.midi_frame)
@@ -478,23 +478,17 @@ class MainWindow(QMainWindow):
             port_name = struct.get('port_name', '')
             
             if self.midi_status == 'ready':
-                self.midi_status_lbl.setText(f"✅ loopMIDI 虛擬線已就緒\n連線連接埠: {port_name}")
+                self.midi_status_lbl.setText(f"🟢 loopMIDI 虛擬線已就緒 (已連線: {port_name})")
                 self.midi_status_lbl.setStyleSheet(f"color: {colors.success};")
-                self.midi_action_btn.setText("🗑️ 解除安裝 loopMIDI")
-                self.midi_action_btn.setStyleSheet(f"background-color: {colors.error_bg}; color: white; border: none; border-radius: 5px;")
-                self.midi_add_btn.show()
-                self.midi_test_btn.show()
-                self.midi_rescan_btn.show()
-                self.midi_diag_btn.show()
+                self.midi_action_btn.hide()
+                self.midi_btn_widget.show()
             elif self.midi_status == 'locked':
-                self.midi_status_lbl.setText("⚠️ MIDI 連接埠被佔用！\n請確認 Studio One 設定中「沒有」將 loopMIDI 勾選為『傳送到 (Send To)』")
+                self.midi_status_lbl.setText("⚠️ MIDI 連接埠被佔用！請確認 Studio One「發送到」設為『無』")
                 self.midi_status_lbl.setStyleSheet(f"color: {colors.error};")
                 self.midi_action_btn.setText("🔄 修正完畢，點我重新連線")
                 self.midi_action_btn.setStyleSheet(f"background-color: #0078D4; color: white; border: none; border-radius: 5px;")
-                self.midi_add_btn.hide()
-                self.midi_test_btn.hide()
-                self.midi_rescan_btn.show()
-                self.midi_diag_btn.show()
+                self.midi_action_btn.show()
+                self.midi_btn_widget.hide()
             elif self.midi_status == 'no_port':
                 is_adm = struct.get('is_admin', False)
                 lm_running = struct.get('loopmidi_running', False)
@@ -504,40 +498,28 @@ class MainWindow(QMainWindow):
                     self.midi_status_lbl.setText(
                         f"⚠️ 偵測到 Windows 權限隔離或連接埠未同步！\n"
                         f"PTTApp 目前以「系統管理員」身分執行。\n"
-                        f"1. 請在 loopMIDI 視窗點擊 [-] 刪除，再按 [+] 重新新增連接埠。\n"
+                        f"1. 請在 loopMIDI 點擊 [-] 刪除再按 [+] 重新新增連接埠。\n"
                         f"2. 或點擊下方按鈕以管理員身分重啟 loopMIDI。"
                     )
                     self.midi_action_btn.setText("🚀 重新以管理員身分啟動 loopMIDI")
                 elif lm_running:
-                    self.midi_status_lbl.setText(
-                        f"⚠️ loopMIDI 已在執行中，但尚未偵測到連接埠！\n"
-                        f"請在 loopMIDI 視窗中：\n"
-                        f"點擊左下角 [-] 刪除舊埠，並按 [+] 重新新增連接埠。"
-                    )
+                    self.midi_status_lbl.setText("⚠️ loopMIDI 執行中但尚未偵測到連接埠，請點擊 [+] 新增。")
                     self.midi_action_btn.setText("🚀 開啟 loopMIDI 介面")
                 else:
-                    self.midi_status_lbl.setText(
-                        f"⚠️ 尚未偵測到可用虛擬線！\n"
-                        f"(系統可見裝置: {dev_desc})\n"
-                        f"請開啟 loopMIDI 並點擊 [+] 新增虛擬埠。"
-                    )
+                    self.midi_status_lbl.setText(f"⚠️ 尚未偵測到可用虛擬線 (可見: {dev_desc})")
                     self.midi_action_btn.setText("🚀 啟動 loopMIDI")
 
                 self.midi_status_lbl.setStyleSheet(f"color: #FFA500;") # Orange
                 self.midi_action_btn.setStyleSheet(f"background-color: #0078D4; color: white; border: none; border-radius: 5px;")
-                self.midi_add_btn.hide()
-                self.midi_test_btn.hide()
-                self.midi_rescan_btn.show()
-                self.midi_diag_btn.show()
+                self.midi_action_btn.show()
+                self.midi_btn_widget.hide()
             else:
                 self.midi_status_lbl.setText("❌ 尚未安裝 loopMIDI 驅動\n請點擊下方按鈕進行一鍵安裝")
                 self.midi_status_lbl.setStyleSheet(f"color: {colors.error};")
                 self.midi_action_btn.setText("📥 一鍵安裝 loopMIDI")
                 self.midi_action_btn.setStyleSheet(f"background-color: #0078D4; color: white; border: none; border-radius: 5px;")
-                self.midi_add_btn.hide()
-                self.midi_test_btn.hide()
-                self.midi_rescan_btn.hide()
-                self.midi_diag_btn.hide()
+                self.midi_action_btn.show()
+                self.midi_btn_widget.hide()
                 
             # Render midi signals
             saved_signals = self.config.get('midi_signals', [])
@@ -866,13 +848,33 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "錯誤", "啟動失敗！")
 
     def set_ui_enabled(self, enabled):
+        self.engine_combo.setEnabled(enabled)
         self.refresh_btn.setEnabled(enabled)
         self.set_hotkey_btn.setEnabled(enabled)
         self.mode_ptt_radio.setEnabled(enabled)
         self.mode_toggle_radio.setEnabled(enabled)
+        
+        # MIDI toolbar lock
+        self.midi_add_btn.setEnabled(enabled)
+        self.midi_test_btn.setEnabled(enabled)
+        self.midi_rescan_btn.setEnabled(enabled)
+        self.midi_diag_btn.setEnabled(enabled)
+        self.midi_action_btn.setEnabled(enabled)
+        
+        # Matrix controls lock
+        self.matrix_in_combo.setEnabled(enabled)
+        self.matrix_out_combo.setEnabled(enabled)
+        self.matrix_add_btn.setEnabled(enabled)
+        
+        # All items lock (Checkboxes, Edit buttons, Delete buttons)
         for w in self.app_widgets:
             if isinstance(w, AppItemWidget):
                 w.checkbox.setEnabled(enabled)
+                w.delete_btn.setEnabled(enabled)
+            elif isinstance(w, MidiSignalWidget):
+                w.checkbox.setEnabled(enabled)
+                w.edit_btn.setEnabled(enabled)
+                w.delete_btn.setEnabled(enabled)
                 
     def on_ptt_state_changed(self, is_unmuted):
         self.overlay.set_state(is_unmuted)

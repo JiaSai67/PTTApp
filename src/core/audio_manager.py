@@ -268,6 +268,56 @@ class StudioOneEngine(BaseAudioEngine):
                 
             winmm.midiOutShortMsg(self.out_handle, msg)
 
+    def generate_midi_diagnostic(self):
+        log = []
+        log.append("=== MIDI Diagnostics ===")
+        import sys
+        import ctypes
+        import struct
+        log.append(f"Python: {sys.version}")
+        log.append(f"Architecture: {struct.calcsize('P') * 8}-bit")
+        try:
+            winmm = ctypes.windll.winmm
+            num_devs = winmm.midiOutGetNumDevs()
+            log.append(f"midiOutGetNumDevs() = {num_devs}")
+            
+            class MIDIOUTCAPSW(ctypes.Structure):
+                _fields_ = [
+                    ("wMid", ctypes.c_ushort),
+                    ("wPid", ctypes.c_ushort),
+                    ("vDriverVersion", ctypes.c_uint),
+                    ("szPname", ctypes.c_wchar * 32),
+                    ("wTechnology", ctypes.c_ushort),
+                    ("wVoices", ctypes.c_ushort),
+                    ("wNotes", ctypes.c_ushort),
+                    ("wChannelMask", ctypes.c_ushort),
+                    ("dwSupport", ctypes.c_uint),
+                ]
+            
+            caps = MIDIOUTCAPSW()
+            for i in range(num_devs):
+                res = winmm.midiOutGetDevCapsW(i, ctypes.byref(caps), ctypes.sizeof(caps))
+                if res == 0:
+                    log.append(f"Device {i}: '{caps.szPname}'")
+                    if 'loopmidi' in caps.szPname.lower():
+                        hMidiOut = ctypes.c_void_p()
+                        open_res = winmm.midiOutOpen(ctypes.byref(hMidiOut), i, 0, 0, 0)
+                        log.append(f"  -> Attempt to open returned: {open_res} (0=Success, 4=MMSYSERR_ALLOCATED)")
+                        if open_res == 0:
+                            winmm.midiOutClose(hMidiOut)
+                else:
+                    log.append(f"Device {i}: midiOutGetDevCapsW failed with code {res}")
+        except Exception as e:
+            import traceback
+            log.append(f"Exception during diagnostic:\n{traceback.format_exc()}")
+            
+        import os
+        log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'midi_diagnostic.txt')
+        with open(log_path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(log))
+            
+        return log_path
+
     def cleanup(self):
         if self.out_handle:
             import ctypes
@@ -296,6 +346,12 @@ class AudioManager:
     def set_mute_for_devices(self, target_ids, mute: bool):
         self.get_current_engine().set_mute(target_ids, mute)
         
+    def generate_midi_diagnostic(self):
+        engine = self.get_current_engine()
+        if hasattr(engine, 'generate_midi_diagnostic'):
+            return engine.generate_midi_diagnostic()
+        return None
+
     def cleanup(self):
         for engine in self.engines.values():
             engine.cleanup()

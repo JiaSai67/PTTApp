@@ -324,9 +324,17 @@ class MainWindow(QMainWindow):
         self.midi_add_btn = QPushButton("➕ 新增 MIDI 訊號")
         self.midi_add_btn.clicked.connect(self.add_midi_signal)
         
+        self.midi_diag_btn = QPushButton("🛠️ 環境檢測")
+        self.midi_diag_btn.clicked.connect(self.run_midi_diagnostic)
+        
         midi_layout.addWidget(self.midi_status_lbl)
         midi_layout.addWidget(self.midi_action_btn, alignment=Qt.AlignCenter)
-        midi_layout.addWidget(self.midi_add_btn, alignment=Qt.AlignCenter)
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.addWidget(self.midi_add_btn)
+        btn_layout.addWidget(self.midi_diag_btn)
+        midi_layout.addLayout(btn_layout)
+        
         self.midi_frame.hide()
         main_layout.addWidget(self.midi_frame)
 
@@ -445,18 +453,21 @@ class MainWindow(QMainWindow):
                 self.midi_action_btn.setText("🔄 修正完畢，點我重新偵測")
                 self.midi_action_btn.setStyleSheet(f"background-color: #0078D4; color: white; border: none;")
                 self.midi_add_btn.hide()
+                self.midi_diag_btn.show()
             elif self.midi_status == 'no_port':
                 self.midi_status_lbl.setText("⚠️ 已經安裝 loopMIDI！\n請點擊下方按鈕開啟它，並按左下角的 [+] 新增虛擬線")
                 self.midi_status_lbl.setStyleSheet(f"color: #FFA500;") # Orange
                 self.midi_action_btn.setText("🚀 第一步：開啟 loopMIDI 介面")
                 self.midi_action_btn.setStyleSheet(f"background-color: #0078D4; color: white; border: none;")
                 self.midi_add_btn.hide()
+                self.midi_diag_btn.show()
             else:
                 self.midi_status_lbl.setText("❌ 尚未安裝 loopMIDI 驅動")
                 self.midi_status_lbl.setStyleSheet(f"color: {colors.error};")
                 self.midi_action_btn.setText("📥 一鍵安裝 loopMIDI")
                 self.midi_action_btn.setStyleSheet(f"background-color: #0078D4; color: white; border: none;")
                 self.midi_add_btn.hide()
+                self.midi_diag_btn.hide()
                 
             # Render midi signals
             saved_signals = self.config.get('midi_signals', [])
@@ -633,6 +644,16 @@ class MainWindow(QMainWindow):
             subprocess.Popen("appwiz.cpl", shell=True)
             self.expected_midi_state = 'not_installed'
             self.midi_check_timer.start(1000)
+
+    def run_midi_diagnostic(self):
+        import os
+        import subprocess
+        log_path = self.audio_manager.generate_midi_diagnostic()
+        if log_path and os.path.exists(log_path):
+            QMessageBox.information(self, "檢測完成", f"已產生檢測報告於:\n{log_path}\n\n即將為您開啟該檔案。")
+            subprocess.Popen(['notepad.exe', log_path])
+        else:
+            QMessageBox.warning(self, "錯誤", "產生檢測報告失敗，請確認程式是否有寫入權限。")
 
     def save_mode(self):
         mode = 'ptt' if self.mode_ptt_radio.isChecked() else 'toggle'

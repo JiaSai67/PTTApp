@@ -469,10 +469,24 @@ class MainWindow(QMainWindow):
                     self.app_widgets.append(w)
                 
         elif struct['type'] == 'matrix':
-            self.matrix_frame.show()
             self.refresh_btn.hide()
             self.midi_frame.hide()
             self.scroll_area.show()
+            
+            status = struct.get('status', 'ready')
+            colors = get_theme_colors()
+            
+            if status == 'not_installed' or status == 'no_port':
+                self.matrix_frame.hide()
+                
+                lbl = QLabel("❌ 尚未偵測到 Voicemeeter 相關環境或套件\n\n由於並非所有使用者都需要此功能，此模組不會預設安裝。")
+                lbl.setAlignment(Qt.AlignCenter)
+                lbl.setStyleSheet(f"color: {colors.error};")
+                self.scroll_layout.addWidget(lbl)
+                self.app_widgets.append(lbl)
+                return
+            else:
+                self.matrix_frame.show()
             
             # Update comboboxes
             self.matrix_in_combo.clear()

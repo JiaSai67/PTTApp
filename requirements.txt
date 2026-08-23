@@ -3,6 +3,5 @@ PySide6-Fluent-Widgets
 pynput
 pycaw
 pywin32
-voicemeeter-api
 mido
 python-rtmidi

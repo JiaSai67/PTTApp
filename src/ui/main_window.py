@@ -231,7 +231,7 @@ class AppItemWidget(QWidget):
         layout.addWidget(self.delete_btn)
 
 
-VERSION = "1.0.5"
+VERSION = "1.0.6"
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -482,10 +482,34 @@ class MainWindow(QMainWindow):
                 self.midi_rescan_btn.show()
                 self.midi_diag_btn.show()
             elif self.midi_status == 'no_port':
+                is_adm = struct.get('is_admin', False)
+                lm_running = struct.get('loopmidi_running', False)
                 dev_desc = ", ".join(devices) if devices else "無可見裝置"
-                self.midi_status_lbl.setText(f"⚠️ 尚未偵測到可用虛擬線！\n(系統可見裝置: {dev_desc})\n請開啟 loopMIDI 並點擊 [+] 新增虛擬埠。")
+                
+                if lm_running and is_adm:
+                    self.midi_status_lbl.setText(
+                        f"⚠️ 偵測到 Windows 權限隔離或連接埠未同步！\n"
+                        f"PTTApp 目前以「系統管理員」身分執行。\n"
+                        f"1. 請在 loopMIDI 視窗點擊 [-] 刪除，再按 [+] 重新新增連接埠。\n"
+                        f"2. 或點擊下方按鈕以管理員身分重啟 loopMIDI。"
+                    )
+                    self.midi_action_btn.setText("🚀 重新以管理員身分啟動 loopMIDI")
+                elif lm_running:
+                    self.midi_status_lbl.setText(
+                        f"⚠️ loopMIDI 已在執行中，但尚未偵測到連接埠！\n"
+                        f"請在 loopMIDI 視窗中：\n"
+                        f"點擊左下角 [-] 刪除舊埠，並按 [+] 重新新增連接埠。"
+                    )
+                    self.midi_action_btn.setText("🚀 開啟 loopMIDI 介面")
+                else:
+                    self.midi_status_lbl.setText(
+                        f"⚠️ 尚未偵測到可用虛擬線！\n"
+                        f"(系統可見裝置: {dev_desc})\n"
+                        f"請開啟 loopMIDI 並點擊 [+] 新增虛擬埠。"
+                    )
+                    self.midi_action_btn.setText("🚀 啟動 loopMIDI")
+
                 self.midi_status_lbl.setStyleSheet(f"color: #FFA500;") # Orange
-                self.midi_action_btn.setText("🚀 開啟 loopMIDI 介面")
                 self.midi_action_btn.setStyleSheet(f"background-color: #0078D4; color: white; border: none; border-radius: 5px;")
                 self.midi_add_btn.hide()
                 self.midi_rescan_btn.show()
@@ -620,6 +644,7 @@ class MainWindow(QMainWindow):
     def handle_midi_action(self):
         import os
         import subprocess
+        import ctypes
         
         if self.midi_status == 'locked':
             self.refresh_apps()
@@ -635,7 +660,14 @@ class MainWindow(QMainWindow):
             loopmidi_path = r"C:\Program Files (x86)\Tobias Erichsen\loopMIDI\loopMIDI.exe"
             if os.path.exists(loopmidi_path):
                 try:
-                    os.startfile(loopmidi_path)
+                    # Kill existing loopmidi process to cleanly restart
+                    subprocess.run('taskkill /F /IM loopMIDI.exe', shell=True, capture_output=True)
+                    # If PTTApp is admin, elevate loopMIDI as admin too
+                    engine = self.audio_manager.get_current_engine()
+                    if hasattr(engine, 'is_admin') and engine.is_admin():
+                        ctypes.windll.shell32.ShellExecuteW(None, "runas", loopmidi_path, None, None, 1)
+                    else:
+                        os.startfile(loopmidi_path)
                 except Exception:
                     subprocess.Popen(loopmidi_path, shell=True)
             self.refresh_apps()

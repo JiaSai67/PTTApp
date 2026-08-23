@@ -306,23 +306,45 @@ class StudioOneEngine(BaseAudioEngine):
             log_debug(f"midiOutOpen failed on {best_dev['name']} with error code: {res}")
             return 'error'
 
+    def is_admin(self):
+        import ctypes
+        try:
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            return False
+
+    def is_loopmidi_running(self):
+        import subprocess
+        try:
+            cmd = 'tasklist /FI "IMAGENAME eq loopMIDI.exe" /NH'
+            out = subprocess.check_output(cmd, shell=True, text=True, errors='ignore')
+            return "loopMIDI.exe" in out
+        except Exception:
+            return False
+
     def get_structure(self):
         status = self._init_port()
         devices = self.enumerate_devices()
         dev_names = [d['name'] for d in devices]
+        is_adm = self.is_admin()
+        lm_running = self.is_loopmidi_running()
 
         if status == 'ready':
             return {
                 'type': 'midi',
                 'status': 'ready',
                 'port_name': self.connected_port_name,
-                'devices': dev_names
+                'devices': dev_names,
+                'is_admin': is_adm,
+                'loopmidi_running': lm_running
             }
         elif status == 'locked':
             return {
                 'type': 'midi',
                 'status': 'locked',
-                'devices': dev_names
+                'devices': dev_names,
+                'is_admin': is_adm,
+                'loopmidi_running': lm_running
             }
 
         import os
@@ -331,13 +353,17 @@ class StudioOneEngine(BaseAudioEngine):
             return {
                 'type': 'midi',
                 'status': 'no_port',
-                'devices': dev_names
+                'devices': dev_names,
+                'is_admin': is_adm,
+                'loopmidi_running': lm_running
             }
 
         return {
             'type': 'midi',
             'status': 'not_installed',
-            'devices': dev_names
+            'devices': dev_names,
+            'is_admin': is_adm,
+            'loopmidi_running': lm_running
         }
 
     def set_mute(self, target_ids, mute: bool):

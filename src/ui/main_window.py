@@ -439,6 +439,12 @@ class MainWindow(QMainWindow):
                 self.midi_action_btn.setText("🗑️ 解除安裝 loopMIDI")
                 self.midi_action_btn.setStyleSheet(f"background-color: {colors.error_bg}; color: white; border: none;")
                 self.midi_add_btn.show()
+            elif self.midi_status == 'locked':
+                self.midi_status_lbl.setText("⚠️ 虛擬線被佔用！\n請確定 Studio One 設定「沒有」將 loopMIDI 設為『傳送到 (Send To)』")
+                self.midi_status_lbl.setStyleSheet(f"color: {colors.error};")
+                self.midi_action_btn.setText("🔄 修正完畢，點我重新偵測")
+                self.midi_action_btn.setStyleSheet(f"background-color: #0078D4; color: white; border: none;")
+                self.midi_add_btn.hide()
             elif self.midi_status == 'no_port':
                 self.midi_status_lbl.setText("⚠️ 已經安裝 loopMIDI！\n請點擊下方按鈕開啟它，並按左下角的 [+] 新增虛擬線")
                 self.midi_status_lbl.setStyleSheet(f"color: #FFA500;") # Orange
@@ -603,7 +609,9 @@ class MainWindow(QMainWindow):
         import os
         import subprocess
         
-        if self.midi_status == 'not_installed':
+        if self.midi_status == 'locked':
+            self.refresh_apps()
+        elif self.midi_status == 'not_installed':
             # Install mode
             project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             installer_path = os.path.join(project_root, 'resources', 'loopMIDISetup.exe')

@@ -186,7 +186,7 @@ class StudioOneEngine(BaseAudioEngine):
 
     def _init_port(self):
         if self.out_handle is not None:
-            return True
+            return 'ready'
         try:
             import ctypes
             winmm = ctypes.windll.winmm
@@ -217,18 +217,24 @@ class StudioOneEngine(BaseAudioEngine):
                         
             if target_id != -1:
                 hMidiOut = ctypes.c_void_p()
-                if winmm.midiOutOpen(ctypes.byref(hMidiOut), target_id, 0, 0, 0) == 0:
+                res = winmm.midiOutOpen(ctypes.byref(hMidiOut), target_id, 0, 0, 0)
+                if res == 0:
                     self.out_handle = hMidiOut
-                    return True
+                    return 'ready'
+                else:
+                    return 'locked'
         except Exception as e:
             import sys
             print(f"[MIDI DEBUG] Exception in native MIDI init: {e}", file=sys.stderr)
             
-        return False
+        return 'error'
 
     def get_structure(self):
-        if self._init_port():
+        status = self._init_port()
+        if status == 'ready':
             return {'type': 'midi', 'status': 'ready'}
+        elif status == 'locked':
+            return {'type': 'midi', 'status': 'locked'}
             
         import os
         loopmidi_path = r"C:\Program Files (x86)\Tobias Erichsen\loopMIDI\loopMIDI.exe"
@@ -238,7 +244,7 @@ class StudioOneEngine(BaseAudioEngine):
         return {'type': 'midi', 'status': 'not_installed'}
 
     def set_mute(self, target_ids, mute: bool):
-        if not self._init_port():
+        if self._init_port() != 'ready':
             return
             
         import ctypes

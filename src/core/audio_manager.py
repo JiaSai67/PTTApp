@@ -367,46 +367,144 @@ class StudioOneEngine(BaseAudioEngine):
     def generate_midi_diagnostic(self):
         log = []
         log.append("==================================================")
-        log.append("             PTTApp MIDI 環境診斷報告              ")
+        log.append("       PTTApp 深度系統與 MIDI 環境診斷報告         ")
         log.append("==================================================")
         import sys
         import platform
         import struct
         import datetime
         import subprocess
+        import os
+        import ctypes
+        import winreg
+
+        is_admin = False
+        try:
+            is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            pass
+
         log.append(f"診斷時間: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        log.append(f"作業系統: Windows {platform.release()} ({platform.version()}) - {platform.machine()}")
+        log.append(f"作業系統: Windows {platform.release()} (組建編號: {platform.version()}) - {platform.machine()}")
+        log.append(f"管理員權限 (IsAdmin): {'[YES] 是 (以管理員身分執行)' if is_admin else '[NO] 否 (一般使用者權限)'}")
         log.append(f"Python 版本: {sys.version}")
         log.append(f"Python 位元: {struct.calcsize('P') * 8}-bit")
         log.append(f"執行路徑: {sys.executable}")
         log.append("")
-        
-        # Check loopMIDI Process
-        log.append("--- [1] loopMIDI 執行狀態 ---")
+
+        # [1] loopMIDI Process & Service State
+        log.append("--- [1] loopMIDI 與行程執行狀態 ---")
         try:
-            cmd = 'tasklist /FI "IMAGENAME eq loopMIDI.exe" /NH'
-            out = subprocess.check_output(cmd, shell=True, text=True, errors='ignore')
+            cmd = 'tasklist /V /FI "IMAGENAME eq loopMIDI.exe" /FO CSV /NH'
+            out = subprocess.check_output(cmd, shell=True, text=True, errors='ignore').strip()
             if "loopMIDI.exe" in out:
-                log.append("[OK] loopMIDI.exe 正在背景執行中。")
+                log.append(f"[OK] loopMIDI.exe 正在執行: {out}")
             else:
                 log.append("[WARN] loopMIDI.exe 目前未在執行中！請開啟 loopMIDI。")
         except Exception as e:
             log.append(f"檢查行程失敗: {e}")
 
-        # Check loopMIDI Install
-        import os
         loopmidi_path = r"C:\Program Files (x86)\Tobias Erichsen\loopMIDI\loopMIDI.exe"
-        log.append(f"安裝路徑 ({loopmidi_path}): {'[OK] 已存在' if os.path.exists(loopmidi_path) else '[ERROR] 不存在'}")
+        log.append(f"loopMIDI.exe 安裝路徑 ({loopmidi_path}): {'[OK] 已存在' if os.path.exists(loopmidi_path) else '[ERROR] 不存在'}")
         log.append("")
 
-        # Check WinMM Devices
-        log.append("--- [2] Windows 系統 MIDI 輸出裝置清單 (WinMM) ---")
+        # [2] Driver Files on Disk
+        log.append("--- [2] 系統底層虛擬驅動檔案完整性檢查 ---")
+        driver_files = [
+            r"C:\Windows\System32\drivers\teVirtualMIDI64.sys",
+            r"C:\Windows\System32\drivers\teVirtualMIDI.sys",
+            r"C:\Windows\System32\teVirtualMIDI64.dll",
+            r"C:\Windows\SysWOW64\teVirtualMIDI32.dll",
+            r"C:\Windows\System32\loopMIDIdrv64.dll",
+            r"C:\Windows\SysWOW64\loopMIDIdrv.dll",
+            r"C:\Program Files (x86)\Tobias Erichsen\loopMIDI\teVirtualMIDI64.dll",
+            r"C:\Program Files (x86)\Tobias Erichsen\loopMIDI\teVirtualMIDI32.dll"
+        ]
+        for df in driver_files:
+            log.append(f"  - {df}: {'[OK] 存在' if os.path.exists(df) else '[MISSING] 不存在'}")
+        log.append("")
+
+        # [3] Registry Drivers32 Registration
+        log.append("--- [3] Windows 登錄檔 Drivers32 MIDI 驅動註冊檢查 ---")
+        for view_name, flags in [("64-bit View", winreg.KEY_WOW64_64KEY), ("32-bit View", winreg.KEY_WOW64_32KEY)]:
+            log.append(f"  * 登錄檔位置: HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Drivers32 ({view_name})")
+            try:
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Drivers32", 0, winreg.KEY_READ | flags) as key:
+                    i = 0
+                    found_any = False
+                    while True:
+                        try:
+                            val_name, val_data, _ = winreg.EnumValue(key, i)
+                            if val_name.lower().startswith("midi"):
+                                log.append(f"     -> {val_name} = '{val_data}'")
+                                found_any = True
+                            i += 1
+                        except OSError:
+                            break
+                    if not found_any:
+                        log.append("     [WARN] 找不到任何 midi* 登錄鍵！")
+            except Exception as e:
+                log.append(f"     [ERROR] 無法讀取登錄檔: {e}")
+        log.append("")
+
+        # [4] Windows Audio & MIDI Services
+        log.append("--- [4] Windows 核心音訊與 MIDI 服務狀態 ---")
+        for srv in ["Audiosrv", "AudioEndpointBuilder", "MidiSrv", "teVirtualMIDI"]:
+            try:
+                cmd = f'sc query "{srv}"'
+                out = subprocess.check_output(cmd, shell=True, text=True, errors='ignore')
+                state_line = next((l.strip() for l in out.splitlines() if "STATE" in l), "UNKNOWN")
+                log.append(f"  - 服務 {srv}: {state_line}")
+            except Exception:
+                log.append(f"  - 服務 {srv}: [NOT FOUND 或無此服務]")
+        log.append("")
+
+        # [5] PnP Device Manager Status via PowerShell
+        log.append("--- [5] Windows 裝置管理員 (PnP) 狀態 ---")
         try:
-            import ctypes
-            num_devs = self.winmm.midiOutGetNumDevs()
-            log.append(f"偵測到的 MIDI 輸出裝置數量 (midiOutGetNumDevs): {num_devs}")
-            
-            for i in range(num_devs):
+            ps_cmd = 'powershell -NoProfile -Command "Get-PnpDevice | Where-Object { $_.FriendlyName -like \'*MIDI*\' -or $_.Class -eq \'MEDIA\' -or $_.FriendlyName -like \'*loop*\' } | Select-Object Status, ProblemCode, ConfigManagerErrorCode, FriendlyName, Class | Format-Table -AutoSize | Out-String -Width 4096"'
+            pnp_out = subprocess.check_output(ps_cmd, shell=True, text=True, errors='ignore').strip()
+            log.append(pnp_out if pnp_out else "[WARN] 未找到任何符合條件的 PnP 裝置。")
+        except Exception as e:
+            log.append(f"[ERROR] 查詢 PnP 裝置失敗: {e}")
+        log.append("")
+
+        # [6] Direct teVirtualMIDI C-API Probe
+        log.append("--- [6] 直接呼叫 teVirtualMIDI 核心 DLL API 探測 ---")
+        te_dll_candidates = [
+            r"C:\Windows\System32\teVirtualMIDI64.dll",
+            r"C:\Program Files (x86)\Tobias Erichsen\loopMIDI\teVirtualMIDI64.dll",
+            r"C:\Windows\SysWOW64\teVirtualMIDI32.dll",
+            r"C:\Program Files (x86)\Tobias Erichsen\loopMIDI\teVirtualMIDI32.dll"
+        ]
+        loaded_te = False
+        for dll_path in te_dll_candidates:
+            if os.path.exists(dll_path):
+                try:
+                    te_lib = ctypes.cdll.LoadLibrary(dll_path)
+                    log.append(f"  [OK] 成功載入: {dll_path}")
+                    if hasattr(te_lib, 'virtualMIDIGetVersion'):
+                        try:
+                            te_lib.virtualMIDIGetVersion.restype = ctypes.c_uint
+                            te_lib.virtualMIDIGetVersion.argtypes = []
+                            ver = te_lib.virtualMIDIGetVersion()
+                            log.append(f"     -> 驅動程式版本代碼 (virtualMIDIGetVersion): {ver}")
+                            loaded_te = True
+                            break
+                        except Exception as ex:
+                            log.append(f"     -> 呼叫 virtualMIDIGetVersion 發生錯誤: {ex}")
+                except Exception as e:
+                    log.append(f"  [FAIL] 載入 {dll_path} 失敗: {e}")
+        if not loaded_te:
+            log.append("  [WARN] 未能成功與 teVirtualMIDI DLL 進行 API 通訊。")
+        log.append("")
+
+        # [7] WinMM API Output & Input Device Enumeration
+        log.append("--- [7] WinMM 傳統多媒體 API 裝置清單 ---")
+        try:
+            num_out = self.winmm.midiOutGetNumDevs()
+            log.append(f"MIDI 輸出裝置數量 (midiOutGetNumDevs): {num_out}")
+            for i in range(num_out):
                 capsW = self.MIDIOUTCAPSW()
                 resW = self.winmm.midiOutGetDevCapsW(i, ctypes.byref(capsW), ctypes.sizeof(capsW))
                 nameW = capsW.szPname if resW == 0 else f"<Unicode 失敗: 代碼 {resW}>"
@@ -415,9 +513,7 @@ class StudioOneEngine(BaseAudioEngine):
                 resA = self.winmm.midiOutGetDevCapsA(i, ctypes.byref(capsA), ctypes.sizeof(capsA))
                 nameA = capsA.szPname.decode('mbcs', errors='ignore') if resA == 0 else f"<ANSI 失敗: 代碼 {resA}>"
                 
-                log.append(f"  [裝置 ID {i}]:")
-                log.append(f"     名稱 (Unicode): '{nameW}'")
-                log.append(f"     名稱 (ANSI):    '{nameA}'")
+                log.append(f"  [輸出 ID {i}]: Unicode='{nameW}', ANSI='{nameA}'")
                 
                 # Test opening
                 hMidiOut = ctypes.c_void_p()
@@ -426,19 +522,22 @@ class StudioOneEngine(BaseAudioEngine):
                     log.append(f"     連接測試: [OK] 成功開啟連接埠 (Handle: {hMidiOut.value})")
                     self.winmm.midiOutClose(hMidiOut)
                 elif open_res == 4:
-                    log.append(f"     連接測試: [WARN] MMSYSERR_ALLOCATED (4) - 埠已被其他程式獨佔 (如 Studio One Send To)")
+                    log.append(f"     連接測試: [WARN] MMSYSERR_ALLOCATED (4) - 埠已被其他程式獨佔")
                 else:
                     log.append(f"     連接測試: [ERROR] 開啟失敗，錯誤代碼: {open_res}")
+                    
+            if hasattr(self.winmm, 'midiInGetNumDevs'):
+                num_in = self.winmm.midiInGetNumDevs()
+                log.append(f"MIDI 輸入裝置數量 (midiInGetNumDevs): {num_in}")
         except Exception as e:
             import traceback
             log.append(f"WinMM 檢測過程發生錯誤:\n{traceback.format_exc()}")
 
         log.append("")
         log.append("==================================================")
-        log.append("診斷結束。請將以上內容提供給開發者分析。")
+        log.append("診斷結束。請將以上完整內容複製或截圖回傳。")
         log.append("==================================================")
         
-        import os
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         log_path = os.path.join(project_root, 'midi_diagnostic.txt')
         with open(log_path, 'w', encoding='utf-8') as f:

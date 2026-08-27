@@ -67,40 +67,58 @@ class VoicemeeterEngine(BaseAudioEngine):
     def __init__(self):
         self.v = None
         self.connected = False
+        self.kind = ""
         self._connect()
 
     def _connect(self):
-        if self.connected:
+        if self.connected and self.v:
             return True
         try:
             import voicemeeterlib
-            try:
-                self.v = voicemeeterlib.api('potato')
-                self.v.login()
-                self.connected = True
-            except Exception:
+            for kind in ['potato', 'banana', 'basic']:
                 try:
-                    self.v = voicemeeterlib.api('banana')
-                    self.v.login()
+                    v = voicemeeterlib.api(kind)
+                    v.login()
+                    self.v = v
                     self.connected = True
-                except Exception:
-                    self.v = voicemeeterlib.api('basic')
-                    self.v.login()
-                    self.connected = True
-            log_debug("Voicemeeter API connected.")
-            return True
+                    self.kind = kind
+                    log_debug(f"Voicemeeter {kind} API connected successfully.")
+                    return True
+                except Exception as ex:
+                    log_debug(f"Voicemeeter {kind} connection attempt failed: {ex}")
+                    self.v = None
+            return False
         except Exception as e:
-            log_debug(f"Voicemeeter connect failed: {e}")
+            log_debug(f"Voicemeeter import or connect failed: {e}")
             return False
 
     def get_structure(self):
         try:
             import voicemeeterlib
-        except (ImportError, Exception):
-            return {'type': 'matrix', 'status': 'not_installed', 'inputs': [], 'outputs': []}
+        except ImportError:
+            return {
+                'type': 'matrix',
+                'status': 'missing_package',
+                'package_name': 'voicemeeter-api',
+                'inputs': [],
+                'outputs': []
+            }
+        except Exception as ex:
+            return {
+                'type': 'matrix',
+                'status': 'missing_package',
+                'error': str(ex),
+                'inputs': [],
+                'outputs': []
+            }
             
         if not self._connect():
-            return {'type': 'matrix', 'status': 'not_installed', 'inputs': [], 'outputs': []}
+            return {
+                'type': 'matrix',
+                'status': 'app_not_running',
+                'inputs': [],
+                'outputs': []
+            }
             
         inputs = []
         outputs = []
@@ -118,7 +136,7 @@ class VoicemeeterEngine(BaseAudioEngine):
                 else:
                     # Virtual Strip
                     if not strip_name:
-                        if "potato" in str(self.v).lower():
+                        if "potato" in str(self.kind).lower():
                             names = ["VAIO", "AUX", "VAIO3"]
                             name_str = f"Virtual Input {names[i-5] if i >= 5 and i-5 < len(names) else i}"
                         else:
@@ -134,21 +152,27 @@ class VoicemeeterEngine(BaseAudioEngine):
                 
                 # Derive logical names like A1, B1 based on is_physical
                 is_physical = hasattr(bus, 'device')
-                # But actually, potato has A1-A5, B1-B3.
-                # A simple mapping for Potato:
-                # 0-4: A1-A5, 5-7: B1-B3
-                if i < 5:
-                    logical = f"A{i+1}"
+                if "potato" in str(self.kind).lower():
+                    logical = f"A{i+1}" if i < 5 else f"B{i-4}"
+                elif "banana" in str(self.kind).lower():
+                    logical = f"A{i+1}" if i < 3 else f"B{i-2}"
                 else:
-                    logical = f"B{i-4}"
+                    logical = f"A{i+1}" if i < 2 else f"B{i-1}"
                     
                 name_str = f"{logical}" + (f" ({bus_name})" if bus_name else "")
                 outputs.append({'id': logical, 'name': name_str})
 
         except Exception as e:
             log_debug(f"Voicemeeter get_structure error: {e}")
+            return {'type': 'matrix', 'status': 'app_not_running', 'inputs': [], 'outputs': []}
             
-        return {'type': 'matrix', 'inputs': inputs, 'outputs': outputs}
+        return {
+            'type': 'matrix',
+            'status': 'ready',
+            'kind': getattr(self, 'kind', 'voicemeeter'),
+            'inputs': inputs,
+            'outputs': outputs
+        }
 
     def set_mute(self, target_ids, mute: bool):
         if not self._connect():
@@ -175,6 +199,7 @@ class VoicemeeterEngine(BaseAudioEngine):
             try:
                 self.v.logout()
                 self.connected = False
+                self.v = None
             except Exception:
                 pass
 

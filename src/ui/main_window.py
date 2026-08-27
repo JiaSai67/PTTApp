@@ -21,6 +21,27 @@ def get_key_name(key):
         return key.char
     return str(key).strip("'")
 
+class PackageInstallWorker(QThread):
+    finished_signal = Signal(bool, str)
+
+    def __init__(self, package_name):
+        super().__init__()
+        self.package_name = package_name
+
+    def run(self):
+        import subprocess
+        import sys
+        try:
+            cmd = [sys.executable, "-m", "pip", "install", self.package_name]
+            flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+            res = subprocess.run(cmd, creationflags=flags, capture_output=True, text=True, encoding='utf-8', errors='replace')
+            if res.returncode == 0:
+                self.finished_signal.emit(True, "安裝成功！")
+            else:
+                self.finished_signal.emit(False, res.stderr or res.stdout or "未知錯誤")
+        except Exception as e:
+            self.finished_signal.emit(False, str(e))
+
 class HotkeyRecorder(QThread):
     hotkey_detected = Signal(str)
 
@@ -233,7 +254,7 @@ class AppItemWidget(QWidget):
         layout.addWidget(self.delete_btn)
 
 
-VERSION = "1.1.0"
+VERSION = "1.1.2"
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -545,15 +566,96 @@ class MainWindow(QMainWindow):
             status = struct.get('status', 'ready')
             colors = get_theme_colors()
             
-            if status == 'not_installed' or status == 'no_port':
+            if status == 'missing_package':
                 self.matrix_frame.hide()
                 
-                lbl = QLabel("❌ 尚未偵測到 Voicemeeter 相關環境或套件\n\n由於並非所有使用者都需要此功能，此模組不會預設安裝。")
-                lbl.setAlignment(Qt.AlignCenter)
-                lbl.setStyleSheet(f"color: {colors.error};")
-                self.scroll_layout.addWidget(lbl)
-                self.app_widgets.append(lbl)
+                container = QWidget()
+                layout = QVBoxLayout(container)
+                layout.setAlignment(Qt.AlignCenter)
+                layout.setSpacing(8)
+                layout.setContentsMargins(10, 30, 10, 30)
+                
+                lbl_icon = QLabel("📦")
+                lbl_icon.setFont(QFont("Segoe UI Emoji", 26))
+                lbl_icon.setAlignment(Qt.AlignCenter)
+                
+                lbl_title = QLabel("❌ 尚未安裝 Voicemeeter Python 整合套件")
+                lbl_title.setFont(get_font(11, bold=True))
+                lbl_title.setStyleSheet(f"color: {colors.error};")
+                lbl_title.setAlignment(Qt.AlignCenter)
+                
+                lbl_desc = QLabel("此模式需要「voicemeeter-api」套件以控制 Voicemeeter 路由。\n請點擊下方按鈕進行一鍵自動安裝。")
+                lbl_desc.setFont(get_font(9))
+                lbl_desc.setStyleSheet(f"color: {colors.text_dim};")
+                lbl_desc.setAlignment(Qt.AlignCenter)
+                
+                btn_install = QPushButton("📥 一鍵安裝 voicemeeter-api 套件")
+                btn_install.setFixedHeight(36)
+                btn_install.setFont(get_font(10, bold=True))
+                btn_install.setStyleSheet("background-color: #0078D4; color: white; border: none; border-radius: 5px; padding: 5px 20px;")
+                btn_install.clicked.connect(lambda: self.install_voicemeeter_package(btn_install))
+                
+                layout.addWidget(lbl_icon)
+                layout.addWidget(lbl_title)
+                layout.addWidget(lbl_desc)
+                layout.addSpacing(6)
+                layout.addWidget(btn_install, alignment=Qt.AlignCenter)
+                
+                self.scroll_layout.addWidget(container)
+                self.app_widgets.append(container)
                 return
+                
+            elif status == 'app_not_running' or status == 'not_installed' or status == 'no_port':
+                self.matrix_frame.hide()
+                
+                container = QWidget()
+                layout = QVBoxLayout(container)
+                layout.setAlignment(Qt.AlignCenter)
+                layout.setSpacing(8)
+                layout.setContentsMargins(10, 30, 10, 30)
+                
+                lbl_icon = QLabel("⚠️")
+                lbl_icon.setFont(QFont("Segoe UI Emoji", 26))
+                lbl_icon.setAlignment(Qt.AlignCenter)
+                
+                lbl_title = QLabel("voicemeeter-api 套件已就緒，但尚未連線到主程式")
+                lbl_title.setFont(get_font(11, bold=True))
+                lbl_title.setStyleSheet("color: #FFA500;")
+                lbl_title.setAlignment(Qt.AlignCenter)
+                
+                lbl_desc = QLabel("請確認 Voicemeeter (Basic / Banana / Potato) 已開啟並正在背景執行。")
+                lbl_desc.setFont(get_font(9))
+                lbl_desc.setStyleSheet(f"color: {colors.text_dim};")
+                lbl_desc.setAlignment(Qt.AlignCenter)
+                
+                btn_box = QHBoxLayout()
+                btn_box.setAlignment(Qt.AlignCenter)
+                
+                btn_retry = QPushButton("🔄 重新連線")
+                btn_retry.setFixedHeight(34)
+                btn_retry.setFont(get_font(10, bold=True))
+                btn_retry.setStyleSheet("background-color: #0078D4; color: white; border: none; border-radius: 5px; padding: 5px 15px;")
+                btn_retry.clicked.connect(self.retry_voicemeeter_connect)
+                
+                btn_download = QPushButton("🌐 前往官網下載")
+                btn_download.setFixedHeight(34)
+                btn_download.setFont(get_font(10))
+                btn_download.setStyleSheet(f"background-color: {colors.bg_card}; color: {colors.text_main}; border: 1px solid {colors.border}; border-radius: 5px; padding: 5px 15px;")
+                btn_download.clicked.connect(lambda: os.startfile("https://vb-audio.com/Voicemeeter/"))
+                
+                btn_box.addWidget(btn_retry)
+                btn_box.addWidget(btn_download)
+                
+                layout.addWidget(lbl_icon)
+                layout.addWidget(lbl_title)
+                layout.addWidget(lbl_desc)
+                layout.addSpacing(6)
+                layout.addLayout(btn_box)
+                
+                self.scroll_layout.addWidget(container)
+                self.app_widgets.append(container)
+                return
+                
             else:
                 self.matrix_frame.show()
             
@@ -572,7 +674,7 @@ class MainWindow(QMainWindow):
             # Render saved matrix routes
             saved_devices = self.config.get('selected_apps') or []
             if not saved_devices:
-                lbl = QLabel("請在上方選擇輸入與輸出端口，並點擊新增。")
+                lbl = QLabel("請在上方選擇輸入與輸出端口，並點擊「➕ 新增路由控制」。")
                 lbl.setAlignment(Qt.AlignCenter)
                 self.scroll_layout.addWidget(lbl)
                 self.app_widgets.append(lbl)
@@ -638,6 +740,32 @@ class MainWindow(QMainWindow):
             saved.remove(route_id)
             self.config.set('selected_apps', saved)
             self.refresh_apps()
+
+    def retry_voicemeeter_connect(self):
+        engine = self.audio_manager.get_current_engine()
+        if hasattr(engine, '_connect'):
+            engine._connect()
+        self.refresh_apps()
+
+    def install_voicemeeter_package(self, btn):
+        btn.setEnabled(False)
+        btn.setText("⏳ 正在安裝 voicemeeter-api 套件...")
+        
+        self.pkg_worker = PackageInstallWorker("voicemeeter-api")
+        def on_finished(success, msg):
+            if success:
+                QMessageBox.information(self, "安裝成功", "✅ 已成功安裝 voicemeeter-api 套件！\n即將自動連線至 Voicemeeter。")
+                engine = self.audio_manager.get_current_engine()
+                if hasattr(engine, '_connect'):
+                    engine._connect()
+                self.refresh_apps()
+            else:
+                QMessageBox.warning(self, "安裝失敗", f"❌ 安裝 voicemeeter-api 失敗:\n{msg}")
+                btn.setEnabled(True)
+                btn.setText("📥 一鍵安裝 voicemeeter-api 套件")
+                
+        self.pkg_worker.finished_signal.connect(on_finished)
+        self.pkg_worker.start()
 
     def handle_midi_action(self):
         import os

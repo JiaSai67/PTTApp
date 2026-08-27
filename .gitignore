@@ -16,3 +16,5 @@ settings.json
 scratch_*.py
 git_status.txt
 status_check.txt
+.scratch/
+.tmp/

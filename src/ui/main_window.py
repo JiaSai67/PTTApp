@@ -2,7 +2,7 @@ import sys
 import datetime
 import socket
 import struct
-import ctypes
+import os
 
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QScrollArea, QCheckBox, 
@@ -73,11 +73,10 @@ class HotkeyRecorder(QThread):
     def _on_k_release(self, key):
         if self.pressed_keys:
             self._finish()
-            return False # stop listener
+            return False
 
     def _on_m_click(self, x, y, button, pressed):
         name = get_key_name(button)
-        # 忽略滑鼠左鍵與右鍵，讓用戶可以點擊介面上的「取消」按鈕
         if name in ['left', 'right']: return 
         
         if name:
@@ -124,88 +123,11 @@ class IconMoverThread(QThread):
             if self.running:
                 self.running = False
                 self.adjustment_finished.emit(int(x), int(y))
-                return False # Stop listener
+                return False
 
     def cancel(self):
         self.running = False
         if self.m_listener: self.m_listener.stop()
-
-
-class MidiSignalDialog(QDialog):
-    def __init__(self, parent=None, signal_data=None):
-        super().__init__(parent)
-        self.setWindowTitle("新增/編輯 MIDI 訊號")
-        self.setFixedSize(320, 140)
-        self.signal_data = signal_data or {}
-        
-        layout = QVBoxLayout(self)
-        form_layout = QFormLayout()
-        self.name_input = QLineEdit(self.signal_data.get('name', '新建功能'))
-        form_layout.addRow("功能名稱:", self.name_input)
-        layout.addLayout(form_layout)
-        
-        btn_layout = QHBoxLayout()
-        save_btn = QPushButton("儲存")
-        save_btn.clicked.connect(self.accept)
-        cancel_btn = QPushButton("取消")
-        cancel_btn.clicked.connect(self.reject)
-        
-        btn_layout.addWidget(save_btn)
-        btn_layout.addWidget(cancel_btn)
-        layout.addLayout(btn_layout)
-        
-    def get_data(self):
-        import uuid
-        name = self.name_input.text().strip()
-        if not name:
-            name = "未命名功能"
-            
-        data = {
-            'id': self.signal_data.get('id', str(uuid.uuid4())),
-            'name': name,
-            'enabled': self.signal_data.get('enabled', True)
-        }
-        
-        if 'type' in self.signal_data:
-            data['type'] = self.signal_data['type']
-            data['channel'] = self.signal_data['channel']
-            data['value'] = self.signal_data['value']
-            
-        return data
-
-class MidiSignalWidget(QWidget):
-    def __init__(self, signal_data):
-        super().__init__()
-        self.signal_data = signal_data
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(15, 10, 15, 10)
-        
-        colors = get_theme_colors()
-        self.setStyleSheet(f"background-color: {colors.bg_card}; color: {colors.text_main}; border-radius: 8px;")
-        
-        self.checkbox = QCheckBox()
-        self.checkbox.setChecked(signal_data.get('enabled', True))
-        
-        lbl_text = f"{signal_data.get('name', '')}  (內部代碼: CC {signal_data.get('value', 0)})"
-        self.name_lbl = QLabel(lbl_text)
-        self.name_lbl.setFont(get_font(10, bold=True))
-        
-        self.edit_btn = QPushButton("✏️ 編輯")
-        self.edit_btn.setFixedSize(70, 28)
-        self.edit_btn.setFont(get_font(9))
-        self.edit_btn.setStyleSheet(f"background-color: #444; color: white; border: none; border-radius: 4px;")
-        
-        self.delete_btn = QPushButton("🗑️ 刪除")
-        self.delete_btn.setFixedSize(60, 28)
-        self.delete_btn.setFont(get_font(9))
-        self.delete_btn.setStyleSheet(f"background-color: {colors.error_bg}; color: white; border: none; border-radius: 4px;")
-        
-        layout.addWidget(self.checkbox)
-        layout.addSpacing(8)
-        layout.addWidget(self.name_lbl, stretch=1)
-        layout.addWidget(self.edit_btn)
-        layout.addSpacing(4)
-        layout.addWidget(self.delete_btn)
 
 
 class OSCSignalDialog(QDialog):
@@ -363,7 +285,7 @@ class OSCConfigDialog(QDialog):
         self.config.set('osc_ip', ip)
         self.config.set('osc_port', port)
         if self.audio_manager:
-            engine = self.audio_manager.engines.get('studioone_osc')
+            engine = self.audio_manager.engines.get('studioone')
             if engine and hasattr(engine, '_reload_config'):
                 engine._reload_config()
         self.accept()
@@ -411,72 +333,15 @@ class OSCListenerWorker(QThread):
             self.sock = None
 
 
-class MIDIListenerWorker(QThread):
-    msg_received = Signal(str)
-    status_changed = Signal(str)
-
-    def __init__(self):
-        super().__init__()
-        self.running = True
-        self.hMidiIn = None
-
-    def run(self):
-        winmm = ctypes.windll.winmm
-        num_in = winmm.midiInGetNumDevs()
-        if num_in == 0:
-            self.status_changed.emit("無輸入裝置 ⚪")
-            return
-            
-        MIM_DATA = 0x3C3
-        MIDIINPROC = ctypes.WINFUNCTYPE(None, ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_size_t, ctypes.c_size_t)
-
-        def _cb(hMidiIn, wMsg, dwInstance, dwParam1, dwParam2):
-            if wMsg == MIM_DATA:
-                status = dwParam1 & 0xFF
-                data1 = (dwParam1 >> 8) & 0xFF
-                data2 = (dwParam1 >> 16) & 0xFF
-                
-                msg_type = "未知"
-                if (status & 0xF0) == 0xB0:
-                    ch = status & 0x0F
-                    msg_type = f"CC 控制 (Ch:{ch}, CC:{data1}, Val:{data2})"
-                elif (status & 0xF0) == 0x90:
-                    ch = status & 0x0F
-                    msg_type = f"Note ON (Ch:{ch}, Note:{data1}, Vel:{data2})"
-                elif (status & 0xF0) == 0x80:
-                    ch = status & 0x0F
-                    msg_type = f"Note OFF (Ch:{ch}, Note:{data1}, Vel:{data2})"
-                    
-                self.msg_received.emit(f"Status=0x{status:02X} -> {msg_type}")
-
-        self.cb_func = MIDIINPROC(_cb)
-        hIn = ctypes.c_void_p()
-        res = winmm.midiInOpen(ctypes.byref(hIn), 0, self.cb_func, 0, 0x00030000)
-        if res == 0:
-            self.hMidiIn = hIn
-            winmm.midiInStart(hIn)
-            self.status_changed.emit("監聽中 🟢")
-            while self.running:
-                self.msleep(100)
-            winmm.midiInStop(hIn)
-            winmm.midiInClose(hIn)
-        else:
-            self.status_changed.emit(f"開啟失敗 (代碼:{res}) 🔴")
-
-    def stop(self):
-        self.running = False
-
-
 class SignalMonitorDialog(QDialog):
     def __init__(self, parent=None, config=None, audio_manager=None):
         super().__init__(parent)
-        self.setWindowTitle("🔍 PTTApp 即時訊號監聽與模擬測試器")
+        self.setWindowTitle("🔍 Studio One OSC 即時訊號監聽與模擬測試器")
         self.resize(580, 440)
         self.config = config
         self.audio_manager = audio_manager
         
         self.osc_listener = None
-        self.midi_listener = None
         
         layout = QVBoxLayout(self)
         colors = get_theme_colors()
@@ -485,10 +350,8 @@ class SignalMonitorDialog(QDialog):
         status_box = QHBoxLayout()
         self.osc_status_tag = QLabel("📡 OSC 監聽器: 啟動中...")
         self.osc_status_tag.setStyleSheet(f"color: {colors.success}; font-weight: bold;")
-        self.midi_status_tag = QLabel("🎹 MIDI 監聽器: 啟動中...")
-        self.midi_status_tag.setStyleSheet(f"color: {colors.success}; font-weight: bold;")
         status_box.addWidget(self.osc_status_tag)
-        status_box.addWidget(self.midi_status_tag)
+        status_box.addStretch()
         layout.addLayout(status_box)
         
         # Log list
@@ -500,11 +363,11 @@ class SignalMonitorDialog(QDialog):
         # Action triggers
         btn_layout = QHBoxLayout()
         
-        btn_unmute = QPushButton("⚡ 模擬發話 (取消靜音)")
+        btn_unmute = QPushButton("⚡ 模擬發話 (發送開麥 0.0)")
         btn_unmute.setStyleSheet(f"background-color: {colors.success_bg}; color: white; border-radius: 4px; padding: 6px 12px; font-weight: bold;")
         btn_unmute.clicked.connect(self._trigger_unmute)
         
-        btn_mute = QPushButton("🔇 模擬放開 (恢復靜音)")
+        btn_mute = QPushButton("🔇 模擬放開 (發送靜音 1.0)")
         btn_mute.setStyleSheet(f"background-color: {colors.error_bg}; color: white; border-radius: 4px; padding: 6px 12px; font-weight: bold;")
         btn_mute.clicked.connect(self._trigger_mute)
         
@@ -517,7 +380,7 @@ class SignalMonitorDialog(QDialog):
         layout.addLayout(btn_layout)
         
         self.start_listeners()
-        self.add_log("系統", "即時訊號監聽與模擬測試器已就緒，等待訊號傳入...")
+        self.add_log("系統", "OSC 訊號監聽與模擬測試器已就緒，等待本機通訊訊號...")
 
     def add_log(self, tag, text, color=None):
         now_str = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
@@ -529,50 +392,27 @@ class SignalMonitorDialog(QDialog):
         self.log_list.scrollToBottom()
 
     def start_listeners(self):
-        # 1. OSC UDP Server
         port = int(self.config.get('osc_port') or 8000)
         self.osc_listener = OSCListenerWorker(port)
         self.osc_listener.msg_received.connect(lambda addr, args: self.add_log("OSC 接收", f"{addr} -> {args}", "#6CCB5F"))
-        self.osc_listener.status_changed.connect(lambda s: self.osc_status_tag.setText(f"📡 OSC ({port}): {s}"))
+        self.osc_listener.status_changed.connect(lambda s: self.osc_status_tag.setText(f"📡 OSC UDP 監聽 (Port {port}): {s}"))
         self.osc_listener.start()
-        
-        # 2. MIDI In loopback
-        self.midi_listener = MIDIListenerWorker()
-        self.midi_listener.msg_received.connect(lambda desc: self.add_log("MIDI 接收", desc, "#6CCB5F"))
-        self.midi_listener.status_changed.connect(lambda s: self.midi_status_tag.setText(f"🎹 MIDI: {s}"))
-        self.midi_listener.start()
 
     def _trigger_unmute(self):
-        self.add_log("PTT 動作", "觸發【發話】訊號 (取消靜音)...", "#FFA500")
+        self.add_log("手動觸發", "發送【發話 / 開麥】訊號 (Mute = 0.0)...", "#FFA500")
         if self.audio_manager:
-            engine_type = self.audio_manager.engine_type
-            if engine_type == 'studioone_osc':
-                sigs = self.config.get('osc_signals') or [{'address': '/track/1/mute'}]
-                self.audio_manager.set_mute_for_devices(sigs, mute=False)
-            elif engine_type == 'studioone':
-                sigs = self.config.get('midi_signals') or [{'type': 'cc', 'channel': 0, 'value': 14}]
-                self.audio_manager.set_mute_for_devices(sigs, mute=False)
-            else:
-                self.audio_manager.send_test_signal()
+            sigs = self.config.get('osc_signals') or [{'address': '/track/1/mute'}]
+            self.audio_manager.set_mute_for_devices(sigs, mute=False)
 
     def _trigger_mute(self):
-        self.add_log("PTT 動作", "觸發【放開】訊號 (恢復靜音)...", "#FF99A4")
+        self.add_log("手動觸發", "發送【放開 / 靜音】訊號 (Mute = 1.0)...", "#FF99A4")
         if self.audio_manager:
-            engine_type = self.audio_manager.engine_type
-            if engine_type == 'studioone_osc':
-                sigs = self.config.get('osc_signals') or [{'address': '/track/1/mute'}]
-                self.audio_manager.set_mute_for_devices(sigs, mute=True)
-            elif engine_type == 'studioone':
-                sigs = self.config.get('midi_signals') or [{'type': 'cc', 'channel': 0, 'value': 14}]
-                self.audio_manager.set_mute_for_devices(sigs, mute=True)
-            else:
-                self.audio_manager.set_mute_for_devices([], mute=True)
+            sigs = self.config.get('osc_signals') or [{'address': '/track/1/mute'}]
+            self.audio_manager.set_mute_for_devices(sigs, mute=True)
 
     def closeEvent(self, event):
         if self.osc_listener:
             self.osc_listener.stop()
-        if self.midi_listener:
-            self.midi_listener.stop()
         super().closeEvent(event)
 
 
@@ -591,7 +431,7 @@ class AppItemWidget(QWidget):
         self.checkbox = QCheckBox()
         layout.addWidget(self.checkbox)
         
-        # Icon (Fallback mic icon since these are devices)
+        # Icon
         self.icon_label = QLabel("🎤")
         self.icon_label.setFont(QFont("Segoe UI Emoji", 14))
         layout.addWidget(self.icon_label)
@@ -603,7 +443,6 @@ class AppItemWidget(QWidget):
         
         layout.addStretch()
 
-        # Delete button for matrix routes (optional, hidden by default)
         self.delete_btn = QPushButton("🗑️")
         self.delete_btn.setFixedSize(30, 30)
         self.delete_btn.setStyleSheet("background: transparent; border: none;")
@@ -611,12 +450,6 @@ class AppItemWidget(QWidget):
         layout.addWidget(self.delete_btn)
 
 
-VERSION = "1.1.2"
-
-class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle(f"按鍵發話 (PTT) 控制器 v{VERSION}")
 VERSION = "1.2.0"
 
 class MainWindow(QMainWindow):
@@ -635,11 +468,6 @@ class MainWindow(QMainWindow):
         self.app_widgets = []
         self.listener_thread = None
         self.mover_thread = None
-        self.midi_status = None
-        
-        # Continuous background poll timer for MIDI state changes
-        self.midi_poll_timer = QTimer(self)
-        self.midi_poll_timer.timeout.connect(self.poll_midi_status)
         
         self.init_ui()
         self.refresh_apps()
@@ -659,19 +487,16 @@ class MainWindow(QMainWindow):
         self.engine_combo = QComboBox()
         self.engine_combo.setFont(get_font(10))
         self.engine_combo.addItems([
-            "Windows 系統麥克風 (目前模式)",
+            "Windows 系統麥克風 (預設模式)",
             "Voicemeeter 路由控制",
-            "Studio One (OSC 免驅動模式 - 推薦)",
-            "Studio One (MIDI 模式 - loopMIDI)"
+            "Studio One (OSC 免驅動模式)"
         ])
+        
         saved_engine = self.config.get('engine_type') or 'windows'
         if saved_engine == 'voicemeeter':
             self.engine_combo.setCurrentIndex(1)
-        elif saved_engine == 'studioone_osc':
+        elif saved_engine in ['studioone', 'studioone_osc']:
             self.engine_combo.setCurrentIndex(2)
-        elif saved_engine == 'studioone':
-            self.engine_combo.setCurrentIndex(3)
-            self.midi_poll_timer.start(1000)
         else:
             self.engine_combo.setCurrentIndex(0)
             
@@ -683,7 +508,7 @@ class MainWindow(QMainWindow):
         header_layout.addStretch()
         main_layout.addLayout(header_layout)
 
-        # Matrix Controls (hidden by default, shown for Voicemeeter)
+        # Matrix Controls (Voicemeeter)
         self.matrix_frame = QWidget()
         matrix_layout = QHBoxLayout(self.matrix_frame)
         matrix_layout.setContentsMargins(0, 0, 0, 0)
@@ -701,7 +526,7 @@ class MainWindow(QMainWindow):
         self.matrix_frame.hide()
         main_layout.addWidget(self.matrix_frame)
         
-        # OSC Controls (hidden by default, shown for Studio One OSC)
+        # OSC Controls (Studio One)
         self.osc_frame = QWidget()
         osc_layout = QVBoxLayout(self.osc_frame)
         osc_layout.setContentsMargins(0, 0, 0, 4)
@@ -748,55 +573,6 @@ class MainWindow(QMainWindow):
         
         self.osc_frame.hide()
         main_layout.addWidget(self.osc_frame)
-
-        # MIDI Controls (hidden by default, shown for Studio One MIDI)
-        self.midi_frame = QWidget()
-        midi_layout = QVBoxLayout(self.midi_frame)
-        midi_layout.setContentsMargins(0, 0, 0, 4)
-        midi_layout.setSpacing(4)
-        
-        self.midi_status_lbl = QLabel()
-        self.midi_status_lbl.setFont(get_font(10, bold=True))
-        self.midi_status_lbl.setAlignment(Qt.AlignCenter)
-        self.midi_status_lbl.setWordWrap(True)
-        
-        self.midi_action_btn = QPushButton()
-        self.midi_action_btn.setFont(get_font(10, bold=True))
-        self.midi_action_btn.setFixedSize(260, 34)
-        self.midi_action_btn.clicked.connect(self.handle_midi_action)
-        
-        self.midi_btn_widget = QWidget()
-        btn_layout = QHBoxLayout(self.midi_btn_widget)
-        btn_layout.setContentsMargins(0, 0, 0, 0)
-        btn_layout.setSpacing(6)
-        
-        self.midi_add_btn = QPushButton("➕ 新增訊號")
-        self.midi_add_btn.setFixedHeight(30)
-        self.midi_add_btn.clicked.connect(self.add_midi_signal)
-        
-        self.midi_test_btn = QPushButton("⚡ 測試訊號")
-        self.midi_test_btn.setFixedHeight(30)
-        self.midi_test_btn.clicked.connect(self.send_test_midi)
-        
-        self.midi_monitor_btn = QPushButton("🔍 訊號監聽器")
-        self.midi_monitor_btn.setFixedHeight(30)
-        self.midi_monitor_btn.clicked.connect(self.open_signal_monitor)
-        
-        self.midi_diag_btn = QPushButton("🛠️ 診斷報告")
-        self.midi_diag_btn.setFixedHeight(30)
-        self.midi_diag_btn.clicked.connect(self.run_midi_diagnostic)
-        
-        btn_layout.addWidget(self.midi_add_btn)
-        btn_layout.addWidget(self.midi_test_btn)
-        btn_layout.addWidget(self.midi_monitor_btn)
-        btn_layout.addWidget(self.midi_diag_btn)
-        
-        midi_layout.addWidget(self.midi_status_lbl)
-        midi_layout.addWidget(self.midi_action_btn, alignment=Qt.AlignCenter)
-        midi_layout.addWidget(self.midi_btn_widget)
-        
-        self.midi_frame.hide()
-        main_layout.addWidget(self.midi_frame)
 
         # Apps List
         self.scroll_area = QScrollArea()
@@ -873,33 +649,16 @@ class MainWindow(QMainWindow):
     def on_engine_changed(self, index):
         if index == 1:
             engine_type = 'voicemeeter'
-            self.midi_poll_timer.stop()
         elif index == 2:
-            engine_type = 'studioone_osc'
-            self.midi_poll_timer.stop()
-        elif index == 3:
             engine_type = 'studioone'
-            self.midi_poll_timer.start(1000)
         else:
             engine_type = 'windows'
-            self.midi_poll_timer.stop()
             
         self.config.set('engine_type', engine_type)
         self.audio_manager.set_engine(engine_type)
         self.refresh_apps()
 
-    def poll_midi_status(self):
-        """Continuous live check of MIDI connection state"""
-        if self.config.get('engine_type') != 'studioone':
-            return
-            
-        struct = self.audio_manager.get_structure()
-        new_status = struct.get('status')
-        if new_status != self.midi_status:
-            self.refresh_apps()
-
     def refresh_apps(self):
-        # Clear old
         for w in self.app_widgets:
             self.scroll_layout.removeWidget(w)
             w.deleteLater()
@@ -910,7 +669,6 @@ class MainWindow(QMainWindow):
         
         if struct['type'] == 'osc':
             self.matrix_frame.hide()
-            self.midi_frame.hide()
             self.refresh_btn.hide()
             self.scroll_area.show()
             self.osc_frame.show()
@@ -946,80 +704,9 @@ class MainWindow(QMainWindow):
                     w.delete_btn.clicked.connect(lambda checked=False, s=sig: self.delete_osc_signal(s))
                     self.scroll_layout.addWidget(w)
                     self.app_widgets.append(w)
-                    
-        elif struct['type'] == 'midi':
-            self.matrix_frame.hide()
-            self.osc_frame.hide()
-            self.refresh_btn.hide()
-            self.scroll_area.show()
-            self.midi_frame.show()
-            
-            self.midi_status = struct.get('status', 'not_installed')
-            devices = struct.get('devices', [])
-            port_name = struct.get('port_name', '')
-            
-            if self.midi_status == 'ready':
-                self.midi_status_lbl.setText(f"🟢 loopMIDI 虛擬線已就緒 (已連線: {port_name})")
-                self.midi_status_lbl.setStyleSheet(f"color: {colors.success};")
-                self.midi_action_btn.hide()
-                self.midi_btn_widget.show()
-            elif self.midi_status == 'locked':
-                self.midi_status_lbl.setText("⚠️ MIDI 連接埠被佔用！請確認 Studio One「發送到」設為『無』")
-                self.midi_status_lbl.setStyleSheet(f"color: {colors.error};")
-                self.midi_action_btn.setText("🔄 修正完畢，點我重新連線")
-                self.midi_action_btn.setStyleSheet(f"background-color: #0078D4; color: white; border: none; border-radius: 5px;")
-                self.midi_action_btn.show()
-                self.midi_btn_widget.hide()
-            elif self.midi_status == 'no_port':
-                is_adm = struct.get('is_admin', False)
-                lm_running = struct.get('loopmidi_running', False)
-                dev_desc = ", ".join(devices) if devices else "無可見裝置"
-                
-                if lm_running and is_adm:
-                    self.midi_status_lbl.setText(
-                        f"⚠️ 偵測到 Windows 權限隔離或連接埠未同步！\n"
-                        f"PTTApp 目前以「系統管理員」身分執行。\n"
-                        f"1. 請在 loopMIDI 點擊 [-] 刪除再按 [+] 重新新增連接埠。\n"
-                        f"2. 或點擊下方按鈕以管理員身分重啟 loopMIDI。"
-                    )
-                    self.midi_action_btn.setText("🚀 重新以管理員身分啟動 loopMIDI")
-                elif lm_running:
-                    self.midi_status_lbl.setText("⚠️ loopMIDI 執行中但尚未偵測到連接埠，請點擊 [+] 新增。")
-                    self.midi_action_btn.setText("🚀 開啟 loopMIDI 介面")
-                else:
-                    self.midi_status_lbl.setText(f"⚠️ 尚未偵測到可用虛擬線 (可見: {dev_desc})")
-                    self.midi_action_btn.setText("🚀 啟動 loopMIDI")
-
-                self.midi_status_lbl.setStyleSheet(f"color: #FFA500;")
-                self.midi_action_btn.setStyleSheet(f"background-color: #0078D4; color: white; border: none; border-radius: 5px;")
-                self.midi_action_btn.show()
-                self.midi_btn_widget.hide()
-            else:
-                self.midi_status_lbl.setText("❌ 尚未安裝 loopMIDI 驅動\n請點擊下方按鈕進行一鍵安裝")
-                self.midi_status_lbl.setStyleSheet(f"color: {colors.error};")
-                self.midi_action_btn.setText("📥 一鍵安裝 loopMIDI")
-                self.midi_action_btn.setStyleSheet(f"background-color: #0078D4; color: white; border: none; border-radius: 5px;")
-                self.midi_action_btn.show()
-                self.midi_btn_widget.hide()
-                
-            saved_signals = self.config.get('midi_signals', [])
-            if not saved_signals and self.midi_status == 'ready':
-                lbl = QLabel("請點選上方的「新增 MIDI 訊號」按鈕開始綁定。")
-                lbl.setAlignment(Qt.AlignCenter)
-                self.scroll_layout.addWidget(lbl)
-                self.app_widgets.append(lbl)
-            else:
-                for sig in saved_signals:
-                    w = MidiSignalWidget(sig)
-                    w.checkbox.stateChanged.connect(self.save_midi_signals)
-                    w.edit_btn.clicked.connect(lambda checked=False, s=sig: self.edit_midi_signal(s))
-                    w.delete_btn.clicked.connect(lambda checked=False, s=sig: self.delete_midi_signal(s))
-                    self.scroll_layout.addWidget(w)
-                    self.app_widgets.append(w)
                 
         elif struct['type'] == 'matrix':
             self.refresh_btn.hide()
-            self.midi_frame.hide()
             self.osc_frame.hide()
             self.scroll_area.show()
             
@@ -1118,7 +805,6 @@ class MainWindow(QMainWindow):
             else:
                 self.matrix_frame.show()
             
-            # Update comboboxes
             self.matrix_in_combo.clear()
             self.matrix_out_combo.clear()
             
@@ -1158,7 +844,6 @@ class MainWindow(QMainWindow):
                         
         else:
             self.matrix_frame.hide()
-            self.midi_frame.hide()
             self.osc_frame.hide()
             self.refresh_btn.show()
             self.scroll_area.show()
@@ -1289,61 +974,6 @@ class MainWindow(QMainWindow):
         self.pkg_worker.finished_signal.connect(on_finished)
         self.pkg_worker.start()
 
-    def handle_midi_action(self):
-        import os
-        import subprocess
-        import ctypes
-        
-        if self.midi_status == 'locked':
-            self.refresh_apps()
-        elif self.midi_status == 'not_installed':
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            installer_path = os.path.join(project_root, 'resources', 'loopMIDISetup.exe')
-            if os.path.exists(installer_path):
-                os.startfile(installer_path)
-            else:
-                QMessageBox.warning(self, "錯誤", f"找不到安裝檔，尋找路徑為: {installer_path}")
-        elif self.midi_status == 'no_port':
-            loopmidi_path = r"C:\Program Files (x86)\Tobias Erichsen\loopMIDI\loopMIDI.exe"
-            if os.path.exists(loopmidi_path):
-                try:
-                    subprocess.run('taskkill /F /IM loopMIDI.exe', shell=True, capture_output=True)
-                    engine = self.audio_manager.get_current_engine()
-                    if hasattr(engine, 'is_admin') and engine.is_admin():
-                        ctypes.windll.shell32.ShellExecuteW(None, "runas", loopmidi_path, None, None, 1)
-                    else:
-                        os.startfile(loopmidi_path)
-                except Exception:
-                    subprocess.Popen(loopmidi_path, shell=True)
-            self.refresh_apps()
-        else:
-            QMessageBox.information(self, "提示", "請在即將開啟的視窗中找到「loopMIDI」，點擊解除安裝。")
-            subprocess.Popen("appwiz.cpl", shell=True)
-
-    def run_midi_diagnostic(self):
-        import os
-        import subprocess
-        log_path = self.audio_manager.generate_midi_diagnostic()
-        if log_path and os.path.exists(log_path):
-            QMessageBox.information(self, "檢測完成", f"已產生檢測報告於:\n{log_path}\n\n即將為您開啟該檔案。")
-            subprocess.Popen(['notepad.exe', log_path])
-        else:
-            QMessageBox.warning(self, "錯誤", "產生檢測報告失敗，請確認程式是否有寫入權限。")
-
-    def send_test_midi(self):
-        success, desc = self.audio_manager.send_test_signal()
-        if success:
-            QMessageBox.information(
-                self,
-                "發送成功",
-                f"✅ 已成功發送 MIDI 測試訊號！\n{desc}\n\n"
-                f"請檢查：\n"
-                f"1. loopMIDI 視窗中的 Total data 是否有增加。\n"
-                f"2. Studio One 的 MIDI 學習面板是否有捕捉到按鈕。"
-            )
-        else:
-            QMessageBox.warning(self, "發送失敗", f"❌ 發送 MIDI 測試訊號失敗:\n{desc}")
-
     def save_mode(self):
         mode = 'ptt' if self.mode_ptt_radio.isChecked() else 'toggle'
         self.config.set('mode', mode)
@@ -1354,58 +984,6 @@ class MainWindow(QMainWindow):
             if isinstance(w, AppItemWidget) and w.checkbox.isChecked():
                 selected_devices.append(w.app_info['id'])
         self.config.set('selected_apps', selected_devices)
-
-    def save_midi_signals(self):
-        signals = self.config.get('midi_signals', [])
-        for w in self.app_widgets:
-            if isinstance(w, MidiSignalWidget):
-                sig = w.signal_data
-                sig['enabled'] = w.checkbox.isChecked()
-                for i, s in enumerate(signals):
-                    if s['id'] == sig['id']:
-                        signals[i] = sig
-                        break
-        self.config.set('midi_signals', signals)
-        
-    def add_midi_signal(self):
-        dialog = MidiSignalDialog(self)
-        if dialog.exec() == QDialog.Accepted:
-            new_sig = dialog.get_data()
-            signals = self.config.get('midi_signals', [])
-            
-            # Auto-assign unique CC value
-            used_vals = [s.get('value', 0) for s in signals if s.get('type', 'cc') == 'cc']
-            next_val = 14
-            while next_val in used_vals:
-                next_val += 1
-                
-            new_sig['type'] = 'cc'
-            new_sig['channel'] = 0
-            new_sig['value'] = next_val
-            
-            signals.append(new_sig)
-            self.config.set('midi_signals', signals)
-            self.refresh_apps()
-            
-    def edit_midi_signal(self, sig):
-        dialog = MidiSignalDialog(self, sig)
-        if dialog.exec() == QDialog.Accepted:
-            updated_sig = dialog.get_data()
-            signals = self.config.get('midi_signals', [])
-            for i, s in enumerate(signals):
-                if s['id'] == updated_sig['id']:
-                    signals[i] = updated_sig
-                    break
-            self.config.set('midi_signals', signals)
-            self.refresh_apps()
-            
-    def delete_midi_signal(self, sig):
-        reply = QMessageBox.question(self, "刪除", f"確定要刪除「{sig.get('name')}」嗎？", QMessageBox.Yes | QMessageBox.No)
-        if reply == QMessageBox.Yes:
-            signals = self.config.get('midi_signals', [])
-            signals = [s for s in signals if s['id'] != sig['id']]
-            self.config.set('midi_signals', signals)
-            self.refresh_apps()
 
     def start_icon_adjustment(self):
         self.adjust_icon_btn.setText("請點擊左鍵放置圖標...")
@@ -1418,7 +996,6 @@ class MainWindow(QMainWindow):
         self.mover_thread.start()
 
     def on_icon_moved(self, x, y):
-        # Center the icon (64x64) on the mouse pointer
         self.overlay.move(x - 32, y - 32)
 
     def on_icon_adjustment_finished(self, x, y):
@@ -1477,8 +1054,6 @@ class MainWindow(QMainWindow):
             for w in self.app_widgets:
                 if isinstance(w, AppItemWidget) and w.checkbox.isChecked():
                     selected_devices.append(w.app_info['id'])
-                elif isinstance(w, MidiSignalWidget) and w.checkbox.isChecked():
-                    selected_devices.append(w.signal_data)
                 elif isinstance(w, OSCSignalWidget) and w.checkbox.isChecked():
                     selected_devices.append(w.signal_data)
                     
@@ -1508,15 +1083,6 @@ class MainWindow(QMainWindow):
             self.osc_test_btn.setEnabled(enabled)
             self.osc_monitor_btn.setEnabled(enabled)
             self.osc_config_btn.setEnabled(enabled)
-
-        # MIDI toolbar lock
-        self.midi_add_btn.setEnabled(enabled)
-        self.midi_test_btn.setEnabled(enabled)
-        if hasattr(self, 'midi_monitor_btn'):
-            self.midi_monitor_btn.setEnabled(enabled)
-        self.midi_rescan_btn.setEnabled(enabled)
-        self.midi_diag_btn.setEnabled(enabled)
-        self.midi_action_btn.setEnabled(enabled)
         
         # Matrix controls lock
         self.matrix_in_combo.setEnabled(enabled)
@@ -1527,10 +1093,6 @@ class MainWindow(QMainWindow):
         for w in self.app_widgets:
             if isinstance(w, AppItemWidget):
                 w.checkbox.setEnabled(enabled)
-                w.delete_btn.setEnabled(enabled)
-            elif isinstance(w, MidiSignalWidget):
-                w.checkbox.setEnabled(enabled)
-                w.edit_btn.setEnabled(enabled)
                 w.delete_btn.setEnabled(enabled)
             elif isinstance(w, OSCSignalWidget):
                 w.checkbox.setEnabled(enabled)

@@ -277,6 +277,66 @@ class StudioOneGuideDialog(QDialog):
         layout.addWidget(close_btn)
 
 
+class DiagnosticDialog(QDialog):
+    """深度系統與環境診斷對話框"""
+    def __init__(self, parent=None, log_path=None):
+        super().__init__(parent)
+        self.setWindowTitle("🛠️ PTTApp 深度系統環境診斷報告")
+        self.resize(620, 500)
+        self.log_path = log_path
+        
+        layout = QVBoxLayout(self)
+        colors = get_theme_colors()
+        
+        title_lbl = QLabel("系統與虛擬傳輸線診斷結果：")
+        title_lbl.setFont(get_font(11, bold=True))
+        layout.addWidget(title_lbl)
+        
+        self.text_edit = QTextEdit()
+        self.text_edit.setReadOnly(True)
+        self.text_edit.setFont(QFont("Consolas", 9))
+        self.text_edit.setStyleSheet(f"background-color: {colors.bg_card}; color: {colors.text_main}; border: 1px solid {colors.border}; border-radius: 6px; padding: 8px;")
+        
+        if log_path and os.path.exists(log_path):
+            try:
+                with open(log_path, 'r', encoding='utf-8') as f:
+                    self.text_edit.setPlainText(f.read())
+            except Exception:
+                pass
+                
+        layout.addWidget(self.text_edit)
+        
+        btn_box = QHBoxLayout()
+        copy_btn = QPushButton("📋 一鍵複製診斷內容")
+        copy_btn.setFixedHeight(34)
+        copy_btn.clicked.connect(self._copy_content)
+        
+        open_btn = QPushButton("📁 以記事本開啟檔案")
+        open_btn.setFixedHeight(34)
+        open_btn.clicked.connect(self._open_file)
+        
+        close_btn = QPushButton("關閉")
+        close_btn.setFixedHeight(34)
+        close_btn.clicked.connect(self.accept)
+        
+        btn_box.addWidget(copy_btn)
+        btn_box.addWidget(open_btn)
+        btn_box.addWidget(close_btn)
+        layout.addLayout(btn_box)
+
+    def _copy_content(self):
+        cb = QApplication.clipboard()
+        cb.setText(self.text_edit.toPlainText())
+        QMessageBox.information(self, "成功", "✅ 診斷內容已複製到剪貼簿！您可以直接貼上傳給開發者。")
+
+    def _open_file(self):
+        if self.log_path and os.path.exists(self.log_path):
+            try:
+                subprocess.Popen(['notepad.exe', self.log_path])
+            except Exception:
+                os.startfile(self.log_path)
+
+
 class AppItemWidget(QWidget):
     def __init__(self, app_info):
         super().__init__()
@@ -308,7 +368,7 @@ class AppItemWidget(QWidget):
         layout.addWidget(self.delete_btn)
 
 
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -394,13 +454,34 @@ class MainWindow(QMainWindow):
         self.s1_status_lbl.setFont(get_font(10, bold=True))
         self.s1_status_lbl.setAlignment(Qt.AlignCenter)
         
+        # Missing driver action box
+        self.s1_missing_box = QWidget()
+        missing_layout = QVBoxLayout(self.s1_missing_box)
+        missing_layout.setContentsMargins(0, 0, 0, 0)
+        missing_layout.setSpacing(4)
+        
         self.s1_install_btn = QPushButton("📥 一鍵安裝 LoopBe1 虛擬傳輸線 (微軟官方認證)")
         self.s1_install_btn.setFixedHeight(34)
         self.s1_install_btn.setFont(get_font(10, bold=True))
         self.s1_install_btn.setStyleSheet("background-color: #0078D4; color: white; border: none; border-radius: 5px;")
         self.s1_install_btn.clicked.connect(self.install_loopbe)
-        self.s1_install_btn.hide()
         
+        missing_sub_box = QHBoxLayout()
+        self.s1_rescan_btn = QPushButton("🔄 重新整理 / 掃描")
+        self.s1_rescan_btn.setFixedHeight(30)
+        self.s1_rescan_btn.clicked.connect(self.refresh_apps)
+        
+        self.s1_diag_btn1 = QPushButton("🛠️ 檢查環境 / 診斷報告")
+        self.s1_diag_btn1.setFixedHeight(30)
+        self.s1_diag_btn1.clicked.connect(self.run_diagnostic)
+        
+        missing_sub_box.addWidget(self.s1_rescan_btn)
+        missing_sub_box.addWidget(self.s1_diag_btn1)
+        
+        missing_layout.addWidget(self.s1_install_btn)
+        missing_layout.addLayout(missing_sub_box)
+        
+        # Ready action box
         self.s1_btn_widget = QWidget()
         s1_btn_layout = QHBoxLayout(self.s1_btn_widget)
         s1_btn_layout.setContentsMargins(0, 0, 0, 0)
@@ -416,11 +497,17 @@ class MainWindow(QMainWindow):
         self.s1_guide_btn.setFont(get_font(10))
         self.s1_guide_btn.clicked.connect(self.open_studioone_guide)
         
+        self.s1_diag_btn2 = QPushButton("🛠️ 診斷報告")
+        self.s1_diag_btn2.setFixedHeight(32)
+        self.s1_diag_btn2.setFont(get_font(10))
+        self.s1_diag_btn2.clicked.connect(self.run_diagnostic)
+        
         s1_btn_layout.addWidget(self.s1_add_btn)
         s1_btn_layout.addWidget(self.s1_guide_btn)
+        s1_btn_layout.addWidget(self.s1_diag_btn2)
         
         s1_layout.addWidget(self.s1_status_lbl)
-        s1_layout.addWidget(self.s1_install_btn)
+        s1_layout.addWidget(self.s1_missing_box)
         s1_layout.addWidget(self.s1_btn_widget)
         
         self.s1_frame.hide()
@@ -518,9 +605,17 @@ class MainWindow(QMainWindow):
                 ctypes.windll.shell32.ShellExecuteW(None, "runas", installer_path, None, None, 1)
             except Exception:
                 os.startfile(installer_path)
-            QMessageBox.information(self, "提示", "已啟動 LoopBe1 安裝程式，請依照畫面指示按 Next 完成安裝。\n安裝完成後請點擊「🔄 重新整理裝置清單」。")
+            QMessageBox.information(self, "提示", "已啟動 LoopBe1 安裝程式，請依照畫面指示按 Next 完成安裝。\n安裝完成後請點擊「🔄 重新整理 / 掃描」。")
         else:
             QMessageBox.warning(self, "錯誤", f"找不到安裝檔: {installer_path}")
+
+    def run_diagnostic(self):
+        log_path = self.audio_manager.generate_diagnostic()
+        if log_path and os.path.exists(log_path):
+            diag = DiagnosticDialog(self, log_path)
+            diag.exec()
+        else:
+            QMessageBox.warning(self, "錯誤", "產生診斷報告失敗！")
 
     def refresh_apps(self):
         for w in self.app_widgets:
@@ -543,12 +638,12 @@ class MainWindow(QMainWindow):
             if status == 'ready':
                 self.s1_status_lbl.setText(f"🟢 虛擬傳輸線已就緒 (已連線: {port_name})")
                 self.s1_status_lbl.setStyleSheet(f"color: {colors.success};")
-                self.s1_install_btn.hide()
+                self.s1_missing_box.hide()
                 self.s1_btn_widget.show()
             else:
                 self.s1_status_lbl.setText("⚠️ 尚未偵測到 LoopBe / MIDI 虛擬傳輸線")
                 self.s1_status_lbl.setStyleSheet("color: #FFA500;")
-                self.s1_install_btn.show()
+                self.s1_missing_box.show()
                 self.s1_btn_widget.hide()
             
             saved_signals = self.config.get('loopbe_signals')
@@ -959,6 +1054,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, 's1_add_btn'):
             self.s1_add_btn.setEnabled(enabled)
             self.s1_guide_btn.setEnabled(enabled)
+            self.s1_diag_btn2.setEnabled(enabled)
         
         self.matrix_in_combo.setEnabled(enabled)
         self.matrix_out_combo.setEnabled(enabled)

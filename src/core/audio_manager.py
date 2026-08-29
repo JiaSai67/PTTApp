@@ -299,6 +299,150 @@ class StudioOneLoopBeEngine(BaseAudioEngine):
         self.send_cc(cc_num, 0)
         return True, f"已向「{self.connected_port_name}」發送 CC:{cc_num} 測試脈衝"
 
+    def generate_diagnostic(self):
+        log = []
+        log.append("==================================================")
+        log.append("       PTTApp 深度系統與虛擬傳輸線環境診斷報告         ")
+        log.append("==================================================")
+        import sys
+        import platform
+        import struct
+        import datetime
+        import subprocess
+        import os
+        import ctypes
+        import winreg
+
+        is_admin = False
+        try:
+            is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            pass
+
+        log.append(f"診斷時間: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        log.append(f"作業系統: Windows {platform.release()} (組建編號: {platform.version()}) - {platform.machine()}")
+        log.append(f"管理員權限 (IsAdmin): {'[YES] 是 (以管理員身分執行)' if is_admin else '[NO] 否 (一般使用者權限)'}")
+        log.append(f"Python 版本: {sys.version}")
+        log.append(f"Python 位元: {struct.calcsize('P') * 8}-bit")
+        log.append(f"執行路徑: {sys.executable}")
+        log.append("")
+
+        # [1] WinMM API Output & Input Device Enumeration
+        log.append("--- [1] WinMM 多媒體 API 裝置清單 ---")
+        try:
+            winmm = ctypes.windll.winmm
+            class MIDIOUTCAPSW(ctypes.Structure):
+                _fields_ = [("wMid", ctypes.c_ushort), ("wPid", ctypes.c_ushort), ("vDriverVersion", ctypes.c_uint), ("szPname", ctypes.c_wchar * 32), ("wTechnology", ctypes.c_ushort), ("wVoices", ctypes.c_ushort), ("wNotes", ctypes.c_ushort), ("wChannelMask", ctypes.c_ushort), ("dwSupport", ctypes.c_uint)]
+            class MIDIOUTCAPSA(ctypes.Structure):
+                _fields_ = [("wMid", ctypes.c_ushort), ("wPid", ctypes.c_ushort), ("vDriverVersion", ctypes.c_uint), ("szPname", ctypes.c_char * 32), ("wTechnology", ctypes.c_ushort), ("wVoices", ctypes.c_ushort), ("wNotes", ctypes.c_ushort), ("wChannelMask", ctypes.c_ushort), ("dwSupport", ctypes.c_uint)]
+
+            num_out = winmm.midiOutGetNumDevs()
+            log.append(f"MIDI 輸出裝置數量 (midiOutGetNumDevs): {num_out}")
+            for i in range(num_out):
+                capsW = MIDIOUTCAPSW()
+                resW = winmm.midiOutGetDevCapsW(i, ctypes.byref(capsW), ctypes.sizeof(capsW))
+                nameW = capsW.szPname if resW == 0 else f"<Unicode 失敗: 代碼 {resW}>"
+                
+                capsA = MIDIOUTCAPSA()
+                resA = winmm.midiOutGetDevCapsA(i, ctypes.byref(capsA), ctypes.sizeof(capsA))
+                nameA = capsA.szPname.decode('mbcs', errors='ignore') if resA == 0 else f"<ANSI 失敗: 代碼 {resA}>"
+                
+                log.append(f"  [輸出 ID {i}]: Unicode='{nameW}', ANSI='{nameA}'")
+                
+                # Test opening
+                hMidiOut = ctypes.c_void_p()
+                open_res = winmm.midiOutOpen(ctypes.byref(hMidiOut), i, 0, 0, 0)
+                if open_res == 0:
+                    log.append(f"     連接測試: [OK] 成功開啟連接埠 (Handle: {hMidiOut.value})")
+                    winmm.midiOutClose(hMidiOut)
+                elif open_res == 4:
+                    log.append(f"     連接測試: [WARN] MMSYSERR_ALLOCATED (4) - 埠已被其他程式獨佔")
+                else:
+                    log.append(f"     連接測試: [ERROR] 開啟失敗，錯誤代碼: {open_res}")
+
+            if hasattr(winmm, 'midiInGetNumDevs'):
+                num_in = winmm.midiInGetNumDevs()
+                log.append(f"MIDI 輸入裝置數量 (midiInGetNumDevs): {num_in}")
+                for i in range(num_in):
+                    capsW = MIDIOUTCAPSW()
+                    resW = winmm.midiInGetDevCapsW(i, ctypes.byref(capsW), ctypes.sizeof(capsW)) if hasattr(winmm, 'midiInGetDevCapsW') else 1
+                    nameW = capsW.szPname if resW == 0 else f"<代碼 {resW}>"
+                    log.append(f"  [輸入 ID {i}]: '{nameW}'")
+        except Exception as e:
+            import traceback
+            log.append(f"WinMM 檢測過程發生錯誤:\n{traceback.format_exc()}")
+        log.append("")
+
+        # [2] Virtual MIDI Driver Files on Disk
+        log.append("--- [2] 系統底層虛擬驅動檔案完整性檢查 ---")
+        driver_files = [
+            r"C:\Windows\System32\drivers\lb1.sys",
+            r"C:\Windows\System32\drivers\teVirtualMIDI64.sys",
+            r"C:\Windows\System32\drivers\teVirtualMIDI.sys",
+            r"C:\Program Files (x86)\nerds.de\LoopBe1",
+            r"C:\Program Files\nerds.de\LoopBe1",
+            r"C:\Program Files (x86)\Tobias Erichsen\loopMIDI\loopMIDI.exe"
+        ]
+        for df in driver_files:
+            log.append(f"  - {df}: {'[OK] 存在' if os.path.exists(df) else '[MISSING] 不存在'}")
+        log.append("")
+
+        # [3] Registry Drivers32 Registration
+        log.append("--- [3] Windows 登錄檔 Drivers32 MIDI 驅動註冊檢查 ---")
+        for view_name, flags in [("64-bit View", winreg.KEY_WOW64_64KEY), ("32-bit View", winreg.KEY_WOW64_32KEY)]:
+            log.append(f"  * 登錄檔位置: HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Drivers32 ({view_name})")
+            try:
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Drivers32", 0, winreg.KEY_READ | flags) as key:
+                    i = 0
+                    found_any = False
+                    while True:
+                        try:
+                            val_name, val_data, _ = winreg.EnumValue(key, i)
+                            if val_name.lower().startswith("midi"):
+                                log.append(f"     -> {val_name} = '{val_data}'")
+                                found_any = True
+                            i += 1
+                        except OSError:
+                            break
+                    if not found_any:
+                        log.append("     [WARN] 找不到任何 midi* 登錄鍵！")
+            except Exception as e:
+                log.append(f"     [ERROR] 無法讀取登錄檔: {e}")
+        log.append("")
+
+        # [4] Windows Audio & MIDI Services
+        log.append("--- [4] Windows 核心音訊與 MIDI 服務狀態 ---")
+        for srv in ["Audiosrv", "AudioEndpointBuilder", "MidiSrv"]:
+            try:
+                cmd = f'sc query "{srv}"'
+                out = subprocess.check_output(cmd, shell=True, text=True, errors='ignore')
+                state_line = next((l.strip() for l in out.splitlines() if "STATE" in l), "UNKNOWN")
+                log.append(f"  - 服務 {srv}: {state_line}")
+            except Exception:
+                log.append(f"  - 服務 {srv}: [NOT FOUND 或無此服務]")
+        log.append("")
+
+        # [5] PnP Device Manager Status via PowerShell
+        log.append("--- [5] Windows 裝置管理員 (PnP) 狀態 ---")
+        try:
+            ps_cmd = 'powershell -NoProfile -Command "Get-PnpDevice | Where-Object { $_.FriendlyName -like \'*MIDI*\' -or $_.Class -eq \'MEDIA\' -or $_.FriendlyName -like \'*Loop*\' } | Select-Object Status, ProblemCode, ConfigManagerErrorCode, FriendlyName, Class | Format-Table -AutoSize | Out-String -Width 4096"'
+            pnp_out = subprocess.check_output(ps_cmd, shell=True, text=True, errors='ignore').strip()
+            log.append(pnp_out if pnp_out else "[WARN] 未找到任何符合條件的 PnP 裝置。")
+        except Exception as e:
+            log.append(f"[ERROR] 查詢 PnP 裝置失敗: {e}")
+        log.append("")
+
+        log.append("==================================================")
+        log.append("診斷結束。請將以上完整內容複製或截圖回傳。")
+        log.append("==================================================")
+
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        log_path = os.path.join(project_root, 'diagnostic_report.txt')
+        with open(log_path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(log))
+            
+        return log_path
+
     def cleanup(self):
         if self.out_handle:
             try:
@@ -338,6 +482,12 @@ class AudioManager:
         if hasattr(engine, 'send_test_signal'):
             return engine.send_test_signal(cc_num)
         return False, "目前引擎不支援訊號測試"
+
+    def generate_diagnostic(self):
+        engine = self.engines.get('studioone')
+        if hasattr(engine, 'generate_diagnostic'):
+            return engine.generate_diagnostic()
+        return None
 
     def cleanup(self):
         for engine in self.engines.values():

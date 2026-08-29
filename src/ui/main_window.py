@@ -1,8 +1,7 @@
 import sys
 import datetime
-import socket
-import struct
 import os
+import subprocess
 
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QScrollArea, QCheckBox, 
@@ -35,7 +34,6 @@ class PackageInstallWorker(QThread):
         self.package_name = package_name
 
     def run(self):
-        import subprocess
         try:
             cmd = [sys.executable, "-m", "pip", "install", self.package_name]
             flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
@@ -130,39 +128,40 @@ class IconMoverThread(QThread):
         if self.m_listener: self.m_listener.stop()
 
 
-class TrackControlDialog(QDialog):
-    """新手友善的 Studio One 軌道新增/編輯視窗 (完全不出現複雜代碼)"""
+class LoopBeSignalDialog(QDialog):
+    """Studio One 控制項目新增/編輯視窗"""
     def __init__(self, parent=None, signal_data=None):
         super().__init__(parent)
-        self.setWindowTitle("新增/編輯 Studio One 控制軌道")
-        self.setFixedSize(360, 180)
+        self.setWindowTitle("新增/編輯 Studio One 控制項目")
+        self.setFixedSize(380, 200)
         self.signal_data = signal_data or {}
         
         layout = QVBoxLayout(self)
         form_layout = QFormLayout()
         
-        self.track_combo = QComboBox()
-        for i in range(1, 17):
-            self.track_combo.addItem(f"🎙️ 軌道 {i} ({'麥克風 - 常用' if i==1 else f'軌道 {i}'})", i)
-        self.track_combo.addItem("🔊 總輸出 (Master 音量軌)", "main")
+        self.preset_combo = QComboBox()
+        self.preset_combo.addItem("自訂設定 (Custom)")
+        self.preset_combo.addItem("👥 電腦觀眾 (CueMix 開關)", {'name': '電腦觀眾 (CueMix 開關)', 'cc': 15})
+        self.preset_combo.addItem("🎙️ 軌道 1 (麥克風整軌)", {'name': '軌道 1 (麥克風整軌)', 'cc': 14})
+        self.preset_combo.addItem("📱 手機 OTG 開關", {'name': '手機 OTG 開關', 'cc': 16})
+        self.preset_combo.addItem("🎙️ 軌道 2 (講話)", {'name': '軌道 2 (講話)', 'cc': 17})
+        self.preset_combo.addItem("🔊 總輸出 (Master 音量軌)", {'name': '總輸出 (Master 音量軌)', 'cc': 18})
         
-        saved_track = self.signal_data.get('track_num', 1)
-        if saved_track == "main":
-            self.track_combo.setCurrentIndex(16)
-        else:
-            try:
-                idx = int(saved_track) - 1
-                if 0 <= idx < 16:
-                    self.track_combo.setCurrentIndex(idx)
-            except Exception:
-                pass
-                
-        self.name_input = QLineEdit(self.signal_data.get('name', 'Studio One 麥克風 (軌道 1)'))
-        self.track_combo.currentIndexChanged.connect(self._on_track_changed)
+        self.name_input = QLineEdit(self.signal_data.get('name', '電腦觀眾 (CueMix 開關)'))
+        self.cc_spin = QSpinBox()
+        self.cc_spin.setRange(0, 127)
+        self.cc_spin.setValue(self.signal_data.get('cc_num', 15))
         
-        form_layout.addRow("控制軌道:", self.track_combo)
-        form_layout.addRow("顯示名稱:", self.name_input)
+        self.preset_combo.currentIndexChanged.connect(self._on_preset_changed)
+        
+        form_layout.addRow("快速範本:", self.preset_combo)
+        form_layout.addRow("控制名稱:", self.name_input)
+        form_layout.addRow("MIDI CC 代碼:", self.cc_spin)
         layout.addLayout(form_layout)
+        
+        tip_lbl = QLabel("💡 一條 LoopBe 傳輸線可同時獨立控制 128 個不同的 CC 代碼！")
+        tip_lbl.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(tip_lbl)
         
         btn_layout = QHBoxLayout()
         save_btn = QPushButton("確認儲存")
@@ -174,36 +173,26 @@ class TrackControlDialog(QDialog):
         btn_layout.addWidget(cancel_btn)
         layout.addLayout(btn_layout)
         
-    def _on_track_changed(self, idx):
-        val = self.track_combo.currentData()
-        if val == "main":
-            self.name_input.setText("總輸出 (Master)")
-        else:
-            self.name_input.setText(f"Studio One 麥克風 (軌道 {val})")
+    def _on_preset_changed(self, idx):
+        data = self.preset_combo.currentData()
+        if data:
+            self.name_input.setText(data['name'])
+            self.cc_spin.setValue(data['cc'])
 
     def get_data(self):
         import uuid
-        track_val = self.track_combo.currentData()
-        name = self.name_input.text().strip() or f"Studio One 軌道 {track_val}"
-        
-        if track_val == "main":
-            addr = "/main/mute"
-            cc = 29
-        else:
-            addr = f"/track/{track_val}/mute"
-            cc = 13 + int(track_val)
-            
+        name = self.name_input.text().strip() or "未命名控制項目"
+        cc = self.cc_spin.value()
         return {
             'id': self.signal_data.get('id', str(uuid.uuid4())),
             'name': name,
-            'track_num': track_val,
-            'address': addr,
             'cc_num': cc,
+            'channel': 0,
             'enabled': self.signal_data.get('enabled', True)
         }
 
 
-class StudioOneTrackWidget(QWidget):
+class LoopBeSignalWidget(QWidget):
     def __init__(self, signal_data):
         super().__init__()
         self.signal_data = signal_data
@@ -216,39 +205,46 @@ class StudioOneTrackWidget(QWidget):
         self.checkbox = QCheckBox()
         self.checkbox.setChecked(signal_data.get('enabled', True))
         
-        lbl_text = f"🎙️ {signal_data.get('name', 'Studio One 麥克風')}"
+        lbl_text = f"🎚️ {signal_data.get('name', '控制項目')}  (CC: {signal_data.get('cc_num', 14)})"
         self.name_lbl = QLabel(lbl_text)
         self.name_lbl.setFont(get_font(10, bold=True))
         
+        self.test_btn = QPushButton("⚡ 測試")
+        self.test_btn.setFixedSize(55, 28)
+        self.test_btn.setFont(get_font(9))
+        self.test_btn.setStyleSheet(f"background-color: {colors.primary}; color: white; border: none; border-radius: 4px;")
+        
         self.edit_btn = QPushButton("✏️ 編輯")
-        self.edit_btn.setFixedSize(70, 28)
+        self.edit_btn.setFixedSize(60, 28)
         self.edit_btn.setFont(get_font(9))
         self.edit_btn.setStyleSheet(f"background-color: #444; color: white; border: none; border-radius: 4px;")
         
         self.delete_btn = QPushButton("🗑️ 刪除")
-        self.delete_btn.setFixedSize(60, 28)
+        self.delete_btn.setFixedSize(55, 28)
         self.delete_btn.setFont(get_font(9))
         self.delete_btn.setStyleSheet(f"background-color: {colors.error_bg}; color: white; border: none; border-radius: 4px;")
         
         layout.addWidget(self.checkbox)
         layout.addSpacing(8)
         layout.addWidget(self.name_lbl, stretch=1)
+        layout.addWidget(self.test_btn)
+        layout.addSpacing(4)
         layout.addWidget(self.edit_btn)
         layout.addSpacing(4)
         layout.addWidget(self.delete_btn)
 
 
 class StudioOneGuideDialog(QDialog):
-    """超詳細圖文步驟指引"""
+    """Studio One 30 秒快速綁定指引"""
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("📖 Studio One 30 秒快速設定指南")
-        self.resize(460, 360)
+        self.setWindowTitle("📖 Studio One 30 秒快速綁定指南")
+        self.resize(480, 420)
         
         layout = QVBoxLayout(self)
         colors = get_theme_colors()
         
-        title_lbl = QLabel("Studio One 設定步驟（只需設定一次）：")
+        title_lbl = QLabel("Studio One 設定步驟（只需做一次）：")
         title_lbl.setFont(get_font(11, bold=True))
         layout.addWidget(title_lbl)
         
@@ -256,21 +252,21 @@ class StudioOneGuideDialog(QDialog):
         guide_text.setReadOnly(True)
         guide_text.setStyleSheet(f"background-color: {colors.bg_card}; color: {colors.text_main}; border: 1px solid {colors.border}; border-radius: 6px; padding: 8px; font-size: 13px; line-height: 1.5;")
         
-        content = """<b>【步驟 1：在 Studio One 新增裝置】</b><br>
-1. 打開 Studio One，點擊上方選單 <b>「選項 (Options)」➔「外部裝置 (External Devices)」</b>。<br>
+        content = """<b>【步驟 1：在 Studio One 新增控制界面】</b><br>
+1. 打開 Studio One ➔ 點擊上方選單 <b>「選項 (Options)」➔「外部裝置 (External Devices)」</b>。<br>
 2. 點擊 <b>「新增 (Add)」</b>。<br>
-3. 在左側清單最上方選擇：<b>「🎚️ 新建控制界面 (New Control Surface)」</b>。<br><br>
+3. 在左側清單最上方選擇：<b>「🎚️ 新建控制界面 (New Control Surface)」</b>。<br>
+4. 「接收自 (Receive From)」下拉選單選擇：<b>LoopBe Internal MIDI</b>（或 loopMIDI Port）。<br>
+5. 「發送到 (Send To)」選擇：<b>無 (None)</b> ➔ 點擊 <b>確定</b> 儲存。<br><br>
 
-<b>【步驟 2：設定連接埠】</b><br>
-1. 「接收自 (Receive From)」選擇：<b>loopMIDI Port</b> (或其他可用輸入)。<br>
-2. 「發送到 (Send To)」選擇：<b>無 (None)</b>。<br>
-3. 點擊 <b>確定</b> 儲存。<br><br>
+<b>【步驟 2：綁定「電腦觀眾 (CueMix)」開關】</b><br>
+1. 在 Studio One 找到您的麥克風軌道，用滑鼠點一下 <b>⏻ 電腦觀眾</b> 開關。<br>
+2. 回到 PTTApp，在「電腦觀眾」那一行點擊 <b>「⚡ 測試」</b> 按鈕。<br>
+3. 回到 Studio One，看左上角的 <b>🖐 静音 / CueMix02</b>，點擊連動鎖鏈圖標，即可完成綁定！<br><br>
 
-<b>【步驟 3：綁定靜音按鈕 (最關鍵)】</b><br>
-1. 在 Studio One 找到您的麥克風軌道（例如第 1 軌）。<br>
-2. 在該軌道的 <b>M (靜音 / Mute)</b> 按鈕上 <b>點右鍵</b> ➔ 選擇 <b>「分配控制 / 分配命令...」</b>。<br>
-3. 此時回到 PTTApp，點擊介面上的 <b>「⚡ 一鍵測試訊號」</b> 按鈕。<br>
-4. Studio One 就會瞬間自動捕捉並完成綁定！大功告成！"""
+<b>【步驟 3：綁定「軌道整軌靜音 (M)」】</b><br>
+1. 在 Studio One 麥克風軌道的 <b>M (靜音)</b> 按鈕上 <b>點右鍵</b> ➔ 選擇 <b>「分配控制...」</b>。<br>
+2. 回到 PTTApp 點擊「軌道 1 麥克風」那一行的 <b>「⚡ 測試」</b> 按鈕，立即完成綁定！"""
         
         guide_text.setHtml(content)
         layout.addWidget(guide_text)
@@ -312,7 +308,7 @@ class AppItemWidget(QWidget):
         layout.addWidget(self.delete_btn)
 
 
-VERSION = "1.2.1"
+VERSION = "1.3.0"
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -351,13 +347,13 @@ class MainWindow(QMainWindow):
         self.engine_combo.addItems([
             "Windows 系統麥克風 (預設模式)",
             "Voicemeeter 路由控制",
-            "Studio One 軌道控制"
+            "Studio One (LoopBe 虛擬傳輸線模式)"
         ])
         
         saved_engine = self.config.get('engine_type') or 'windows'
         if saved_engine == 'voicemeeter':
             self.engine_combo.setCurrentIndex(1)
-        elif saved_engine in ['studioone', 'studioone_osc']:
+        elif saved_engine in ['studioone', 'studioone_loopbe', 'studioone_osc']:
             self.engine_combo.setCurrentIndex(2)
         else:
             self.engine_combo.setCurrentIndex(0)
@@ -388,43 +384,43 @@ class MainWindow(QMainWindow):
         self.matrix_frame.hide()
         main_layout.addWidget(self.matrix_frame)
         
-        # Studio One Controls (新手友善介面)
+        # Studio One LoopBe Controls
         self.s1_frame = QWidget()
         s1_layout = QVBoxLayout(self.s1_frame)
         s1_layout.setContentsMargins(0, 0, 0, 4)
         s1_layout.setSpacing(6)
         
-        self.s1_status_lbl = QLabel("🟢 Studio One 控制模式已就緒")
+        self.s1_status_lbl = QLabel()
         self.s1_status_lbl.setFont(get_font(10, bold=True))
         self.s1_status_lbl.setAlignment(Qt.AlignCenter)
-        colors = get_theme_colors()
-        self.s1_status_lbl.setStyleSheet(f"color: {colors.success};")
+        
+        self.s1_install_btn = QPushButton("📥 一鍵安裝 LoopBe1 虛擬傳輸線 (微軟官方認證)")
+        self.s1_install_btn.setFixedHeight(34)
+        self.s1_install_btn.setFont(get_font(10, bold=True))
+        self.s1_install_btn.setStyleSheet("background-color: #0078D4; color: white; border: none; border-radius: 5px;")
+        self.s1_install_btn.clicked.connect(self.install_loopbe)
+        self.s1_install_btn.hide()
         
         self.s1_btn_widget = QWidget()
         s1_btn_layout = QHBoxLayout(self.s1_btn_widget)
         s1_btn_layout.setContentsMargins(0, 0, 0, 0)
         s1_btn_layout.setSpacing(6)
         
-        self.s1_add_btn = QPushButton("➕ 新增控制軌道")
+        self.s1_add_btn = QPushButton("➕ 新增控制項目")
         self.s1_add_btn.setFixedHeight(32)
         self.s1_add_btn.setFont(get_font(10))
-        self.s1_add_btn.clicked.connect(self.add_studioone_track)
+        self.s1_add_btn.clicked.connect(self.add_loopbe_signal)
         
-        self.s1_test_btn = QPushButton("⚡ 一鍵測試訊號")
-        self.s1_test_btn.setFixedHeight(32)
-        self.s1_test_btn.setFont(get_font(10, bold=True))
-        self.s1_test_btn.clicked.connect(self.send_test_studioone)
-        
-        self.s1_guide_btn = QPushButton("📖 設定教學")
+        self.s1_guide_btn = QPushButton("📖 30 秒設定教學")
         self.s1_guide_btn.setFixedHeight(32)
         self.s1_guide_btn.setFont(get_font(10))
         self.s1_guide_btn.clicked.connect(self.open_studioone_guide)
         
         s1_btn_layout.addWidget(self.s1_add_btn)
-        s1_btn_layout.addWidget(self.s1_test_btn)
         s1_btn_layout.addWidget(self.s1_guide_btn)
         
         s1_layout.addWidget(self.s1_status_lbl)
+        s1_layout.addWidget(self.s1_install_btn)
         s1_layout.addWidget(self.s1_btn_widget)
         
         self.s1_frame.hide()
@@ -481,6 +477,7 @@ class MainWindow(QMainWindow):
         self.cancel_hotkey_btn = QPushButton("取消綁定")
         self.cancel_hotkey_btn.clicked.connect(self.cancel_hotkey_listen)
         self.cancel_hotkey_btn.hide()
+        colors = get_theme_colors()
         self.cancel_hotkey_btn.setStyleSheet(f"background-color: {colors.error_bg}; color: white; border: none; padding: 5px;")
         
         self.adjust_icon_btn = QPushButton("調整圖標位置")
@@ -512,6 +509,19 @@ class MainWindow(QMainWindow):
         self.audio_manager.set_engine(engine_type)
         self.refresh_apps()
 
+    def install_loopbe(self):
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        installer_path = os.path.join(project_root, 'resources', 'setuploopbe1.exe')
+        if os.path.exists(installer_path):
+            try:
+                import ctypes
+                ctypes.windll.shell32.ShellExecuteW(None, "runas", installer_path, None, None, 1)
+            except Exception:
+                os.startfile(installer_path)
+            QMessageBox.information(self, "提示", "已啟動 LoopBe1 安裝程式，請依照畫面指示按 Next 完成安裝。\n安裝完成後請點擊「🔄 重新整理裝置清單」。")
+        else:
+            QMessageBox.warning(self, "錯誤", f"找不到安裝檔: {installer_path}")
+
     def refresh_apps(self):
         for w in self.app_widgets:
             self.scroll_layout.removeWidget(w)
@@ -521,36 +531,59 @@ class MainWindow(QMainWindow):
         struct = self.audio_manager.get_structure()
         colors = get_theme_colors()
         
-        if struct['type'] == 'studioone':
+        if struct['type'] == 'studioone_loopbe':
             self.matrix_frame.hide()
             self.refresh_btn.hide()
             self.scroll_area.show()
             self.s1_frame.show()
             
-            saved_tracks = self.config.get('s1_tracks')
-            if saved_tracks is None:
-                # Default pre-filled Track 1 (Microphone)
-                saved_tracks = [{
-                    'id': 's1_track_1',
-                    'name': 'Studio One 麥克風 (軌道 1)',
-                    'track_num': 1,
-                    'address': '/track/1/mute',
-                    'cc_num': 14,
-                    'enabled': True
-                }]
-                self.config.set('s1_tracks', saved_tracks)
+            port_name = struct.get('port_name', '')
+            status = struct.get('status', 'ready')
+            
+            if status == 'ready':
+                self.s1_status_lbl.setText(f"🟢 虛擬傳輸線已就緒 (已連線: {port_name})")
+                self.s1_status_lbl.setStyleSheet(f"color: {colors.success};")
+                self.s1_install_btn.hide()
+                self.s1_btn_widget.show()
+            else:
+                self.s1_status_lbl.setText("⚠️ 尚未偵測到 LoopBe / MIDI 虛擬傳輸線")
+                self.s1_status_lbl.setStyleSheet("color: #FFA500;")
+                self.s1_install_btn.show()
+                self.s1_btn_widget.hide()
+            
+            saved_signals = self.config.get('loopbe_signals')
+            if saved_signals is None:
+                # Default pre-filled 電腦觀眾 (CC 15) & 軌道 1 (CC 14)
+                saved_signals = [
+                    {
+                        'id': 's1_cuemix_audience',
+                        'name': '電腦觀眾 (CueMix 開關)',
+                        'cc_num': 15,
+                        'channel': 0,
+                        'enabled': True
+                    },
+                    {
+                        'id': 's1_track_1_mic',
+                        'name': '軌道 1 (麥克風整軌)',
+                        'cc_num': 14,
+                        'channel': 0,
+                        'enabled': False
+                    }
+                ]
+                self.config.set('loopbe_signals', saved_signals)
                 
-            if not saved_tracks:
-                lbl = QLabel("目前尚未新增軌道，請點擊上方的「➕ 新增控制軌道」開始使用。")
+            if not saved_signals:
+                lbl = QLabel("目前尚未新增控制項目，請點擊上方的「➕ 新增控制項目」開始使用。")
                 lbl.setAlignment(Qt.AlignCenter)
                 self.scroll_layout.addWidget(lbl)
                 self.app_widgets.append(lbl)
             else:
-                for tr in saved_tracks:
-                    w = StudioOneTrackWidget(tr)
-                    w.checkbox.stateChanged.connect(self.save_studioone_tracks)
-                    w.edit_btn.clicked.connect(lambda checked=False, t=tr: self.edit_studioone_track(t))
-                    w.delete_btn.clicked.connect(lambda checked=False, t=tr: self.delete_studioone_track(t))
+                for sig in saved_signals:
+                    w = LoopBeSignalWidget(sig)
+                    w.checkbox.stateChanged.connect(self.save_loopbe_signals)
+                    w.test_btn.clicked.connect(lambda checked=False, s=sig: self.test_loopbe_signal(s))
+                    w.edit_btn.clicked.connect(lambda checked=False, s=sig: self.edit_loopbe_signal(s))
+                    w.delete_btn.clicked.connect(lambda checked=False, s=sig: self.delete_loopbe_signal(s))
                     self.scroll_layout.addWidget(w)
                     self.app_widgets.append(w)
                 
@@ -714,57 +747,58 @@ class MainWindow(QMainWindow):
                 self.scroll_layout.addWidget(w)
                 self.app_widgets.append(w)
 
-    def save_studioone_tracks(self):
-        tracks = self.config.get('s1_tracks', [])
+    def save_loopbe_signals(self):
+        signals = self.config.get('loopbe_signals', [])
         for w in self.app_widgets:
-            if isinstance(w, StudioOneTrackWidget):
-                tr = w.signal_data
-                tr['enabled'] = w.checkbox.isChecked()
-                for i, t in enumerate(tracks):
-                    if t['id'] == tr['id']:
-                        tracks[i] = tr
+            if isinstance(w, LoopBeSignalWidget):
+                sig = w.signal_data
+                sig['enabled'] = w.checkbox.isChecked()
+                for i, s in enumerate(signals):
+                    if s['id'] == sig['id']:
+                        signals[i] = sig
                         break
-        self.config.set('s1_tracks', tracks)
+        self.config.set('loopbe_signals', signals)
 
-    def add_studioone_track(self):
-        dialog = TrackControlDialog(self)
+    def add_loopbe_signal(self):
+        dialog = LoopBeSignalDialog(self)
         if dialog.exec() == QDialog.Accepted:
-            new_tr = dialog.get_data()
-            tracks = self.config.get('s1_tracks') or []
-            tracks.append(new_tr)
-            self.config.set('s1_tracks', tracks)
+            new_sig = dialog.get_data()
+            signals = self.config.get('loopbe_signals') or []
+            signals.append(new_sig)
+            self.config.set('loopbe_signals', signals)
             self.refresh_apps()
 
-    def edit_studioone_track(self, tr):
-        dialog = TrackControlDialog(self, tr)
+    def edit_loopbe_signal(self, sig):
+        dialog = LoopBeSignalDialog(self, sig)
         if dialog.exec() == QDialog.Accepted:
-            updated_tr = dialog.get_data()
-            tracks = self.config.get('s1_tracks') or []
-            for i, t in enumerate(tracks):
-                if t['id'] == updated_tr['id']:
-                    tracks[i] = updated_tr
+            updated_sig = dialog.get_data()
+            signals = self.config.get('loopbe_signals') or []
+            for i, s in enumerate(signals):
+                if s['id'] == updated_sig['id']:
+                    signals[i] = updated_sig
                     break
-            self.config.set('s1_tracks', tracks)
+            self.config.set('loopbe_signals', signals)
             self.refresh_apps()
 
-    def delete_studioone_track(self, tr):
-        reply = QMessageBox.question(self, "刪除", f"確定要刪除「{tr.get('name')}」嗎？", QMessageBox.Yes | QMessageBox.No)
+    def delete_loopbe_signal(self, sig):
+        reply = QMessageBox.question(self, "刪除", f"確定要刪除「{sig.get('name')}」嗎？", QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
-            tracks = self.config.get('s1_tracks') or []
-            tracks = [t for t in tracks if t['id'] != tr['id']]
-            self.config.set('s1_tracks', tracks)
+            signals = self.config.get('loopbe_signals') or []
+            signals = [s for s in signals if s['id'] != sig['id']]
+            self.config.set('loopbe_signals', signals)
             self.refresh_apps()
 
-    def send_test_studioone(self):
-        success, desc = self.audio_manager.send_test_signal()
+    def test_loopbe_signal(self, sig):
+        cc = sig.get('cc_num', 14)
+        success, desc = self.audio_manager.send_test_signal(cc)
         if success:
             QMessageBox.information(
                 self,
                 "發送成功",
-                f"✅ 已成功發送 Studio One 測試控制訊號！\n\n"
-                f"【綁定提示】\n"
-                f"只要在 Studio One 軌道上的 M (靜音) 按鈕按右鍵 ➔ 選擇「分配命令」或「分配控制」，\n"
-                f"然後點擊本按鈕，Studio One 就會自動完成綁定！"
+                f"✅ 已成功發送「{sig.get('name')}」測試訊號！\n{desc}\n\n"
+                f"【Studio One 自動綁定提示】\n"
+                f"只要在 Studio One 畫面點擊要綁定的按鈕（如 ⏻ 電腦觀眾 或 M 靜音），\n"
+                f"然後點擊本測試按鈕，Studio One 就會自動捕捉並綁定此功能！"
             )
         else:
             QMessageBox.warning(self, "發送失敗", f"❌ 發送測試訊號失敗:\n{desc}")
@@ -899,7 +933,7 @@ class MainWindow(QMainWindow):
             for w in self.app_widgets:
                 if isinstance(w, AppItemWidget) and w.checkbox.isChecked():
                     selected_devices.append(w.app_info['id'])
-                elif isinstance(w, StudioOneTrackWidget) and w.checkbox.isChecked():
+                elif isinstance(w, LoopBeSignalWidget) and w.checkbox.isChecked():
                     selected_devices.append(w.signal_data)
                     
             if not selected_devices:
@@ -922,24 +956,21 @@ class MainWindow(QMainWindow):
         self.mode_ptt_radio.setEnabled(enabled)
         self.mode_toggle_radio.setEnabled(enabled)
         
-        # Studio One toolbar lock
         if hasattr(self, 's1_add_btn'):
             self.s1_add_btn.setEnabled(enabled)
-            self.s1_test_btn.setEnabled(enabled)
             self.s1_guide_btn.setEnabled(enabled)
         
-        # Matrix controls lock
         self.matrix_in_combo.setEnabled(enabled)
         self.matrix_out_combo.setEnabled(enabled)
         self.matrix_add_btn.setEnabled(enabled)
         
-        # All items lock (Checkboxes, Edit buttons, Delete buttons)
         for w in self.app_widgets:
             if isinstance(w, AppItemWidget):
                 w.checkbox.setEnabled(enabled)
                 w.delete_btn.setEnabled(enabled)
-            elif isinstance(w, StudioOneTrackWidget):
+            elif isinstance(w, LoopBeSignalWidget):
                 w.checkbox.setEnabled(enabled)
+                w.test_btn.setEnabled(enabled)
                 w.edit_btn.setEnabled(enabled)
                 w.delete_btn.setEnabled(enabled)
                 

@@ -617,6 +617,14 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.warning(self, "錯誤", "產生診斷報告失敗！")
 
+    def restart_audio_svc(self):
+        ok, msg = self.audio_manager.restart_audio_services()
+        if ok:
+            QMessageBox.information(self, "成功", "✅ 已成功重啟 Windows 音訊服務！\n正在重新掃描虛擬傳輸線...")
+        else:
+            QMessageBox.warning(self, "提示", f"重啟音訊服務失敗或權限不足:\n{msg}\n\n💡 建議直接將電腦【重新開機】，重開機後 LoopBe1 即可永久生效！")
+        self.refresh_apps()
+
     def refresh_apps(self):
         for w in self.app_widgets:
             self.scroll_layout.removeWidget(w)
@@ -640,9 +648,22 @@ class MainWindow(QMainWindow):
                 self.s1_status_lbl.setStyleSheet(f"color: {colors.success};")
                 self.s1_missing_box.hide()
                 self.s1_btn_widget.show()
+            elif status == 'installed_pending_restart':
+                self.s1_status_lbl.setText("⚠️ LoopBe1 驅動已安裝！請重啟音訊服務或重新開機以啟用")
+                self.s1_status_lbl.setStyleSheet("color: #FFA500;")
+                self.s1_install_btn.setText("⚡ 一鍵啟用 / 重啟音訊服務 (免重開機)")
+                try: self.s1_install_btn.clicked.disconnect()
+                except Exception: pass
+                self.s1_install_btn.clicked.connect(self.restart_audio_svc)
+                self.s1_missing_box.show()
+                self.s1_btn_widget.hide()
             else:
                 self.s1_status_lbl.setText("⚠️ 尚未偵測到 LoopBe / MIDI 虛擬傳輸線")
                 self.s1_status_lbl.setStyleSheet("color: #FFA500;")
+                self.s1_install_btn.setText("📥 一鍵安裝 LoopBe1 虛擬傳輸線 (微軟官方認證)")
+                try: self.s1_install_btn.clicked.disconnect()
+                except Exception: pass
+                self.s1_install_btn.clicked.connect(self.install_loopbe)
                 self.s1_missing_box.show()
                 self.s1_btn_widget.hide()
             

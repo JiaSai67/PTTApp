@@ -260,11 +260,32 @@ class StudioOneLoopBeEngine(BaseAudioEngine):
                 'status': 'ready',
                 'port_name': self.connected_port_name
             }
+        
+        # Check if driver is already on disk or in PnP
+        import os
+        is_installed = os.path.exists(r"C:\Program Files (x86)\nerds.de\LoopBe1") or os.path.exists(r"C:\Program Files\nerds.de\LoopBe1")
+        if is_installed:
+            return {
+                'type': 'studioone_loopbe',
+                'status': 'installed_pending_restart',
+                'port_name': ''
+            }
+
         return {
             'type': 'studioone_loopbe',
             'status': 'need_loopbe',
             'port_name': ''
         }
+
+    def restart_audio_services(self):
+        import subprocess
+        try:
+            cmd = "net stop audiosrv /y && net start audiosrv && net start AudioEndpointBuilder"
+            res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            self.cleanup()
+            return True, "已成功重啟 Windows 音訊服務！"
+        except Exception as e:
+            return False, str(e)
 
     def send_cc(self, cc_num: int, val: int, channel: int = 0):
         if self._init_port() != 'ready' or not self.out_handle:
@@ -488,6 +509,12 @@ class AudioManager:
         if hasattr(engine, 'generate_diagnostic'):
             return engine.generate_diagnostic()
         return None
+
+    def restart_audio_services(self):
+        engine = self.engines.get('studioone')
+        if hasattr(engine, 'restart_audio_services'):
+            return engine.restart_audio_services()
+        return False, "目前引擎不支援重啟音訊服務"
 
     def cleanup(self):
         for engine in self.engines.values():

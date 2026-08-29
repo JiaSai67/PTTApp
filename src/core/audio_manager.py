@@ -290,48 +290,59 @@ class StudioOneOSCEngine(BaseAudioEngine):
     def get_structure(self):
         self._reload_config()
         return {
-            'type': 'osc',
+            'type': 'studioone',
             'status': 'ready',
             'ip': self.ip,
             'port': self.port
         }
 
-    def send_osc(self, address: str, *args):
+    def _send_midi_fallback(self, cc_num: int, val: int):
+        """Silently broadcasts to loopMIDI / WinMM if present for Studio One Control Surface"""
+        try:
+            import ctypes
+            winmm = ctypes.windll.winmm
+            for i in range(winmm.midiOutGetNumDevs()):
+                h = ctypes.c_void_p()
+                if winmm.midiOutOpen(ctypes.byref(h), i, 0, 0, 0) == 0:
+                    msg = 0xB0 | (cc_num << 8) | (val << 16)
+                    winmm.midiOutShortMsg(h, msg)
+                    winmm.midiOutClose(h)
+        except Exception:
+            pass
+
+    def send_signal(self, address: str, cc_num: int, mute: bool):
         self._reload_config()
+        # 1. OSC UDP packet
+        val_float = 1.0 if mute else 0.0
         try:
             sock = self.get_socket()
-            packet = encode_osc_message(address, *args)
+            packet = encode_osc_message(address, val_float)
             sock.sendto(packet, (self.ip, self.port))
-            log_debug(f"OSC Sent: {address} {args} -> {self.ip}:{self.port}")
-            return True, f"已發送 OSC 訊號: {address} {args}"
+            log_debug(f"Studio One OSC: {address} -> {val_float}")
         except Exception as e:
-            log_debug(f"OSC Send Error: {e}")
-            return False, f"OSC 發送失敗: {e}"
+            log_debug(f"Studio One OSC error: {e}")
+            
+        # 2. MIDI CC fallback (CC 14+ / 127 = Mute, 0 = Unmute)
+        val_midi = 127 if mute else 0
+        self._send_midi_fallback(cc_num, val_midi)
+        return True
 
     def set_mute(self, target_ids, mute: bool):
-        # target_ids can be a list of dicts or str addresses
-        for sig in target_ids:
+        for idx, sig in enumerate(target_ids):
             if isinstance(sig, dict):
-                address = sig.get('address', '/track/1/mute')
-                val_type = sig.get('type', 'float')
-                if val_type == 'float':
-                    val = float(sig.get('mute_val', 1.0) if mute else sig.get('unmute_val', 0.0))
-                elif val_type == 'int':
-                    val = int(sig.get('mute_val', 1) if mute else sig.get('unmute_val', 0))
-                else:
-                    val = bool(mute)
-                self.send_osc(address, val)
+                addr = sig.get('address') or f"/track/{sig.get('track_num', idx+1)}/mute"
+                cc = int(sig.get('cc_num') or (14 + idx))
+                self.send_signal(addr, cc, mute)
             elif isinstance(sig, str):
-                val = 1.0 if mute else 0.0
-                self.send_osc(sig, val)
+                self.send_signal(sig, 14 + idx, mute)
 
     def send_test_signal(self):
         self._reload_config()
-        s1, d1 = self.send_osc('/track/1/mute', 1.0)
+        self.send_signal('/track/1/mute', 14, True)
         import time
         time.sleep(0.05)
-        s2, d2 = self.send_osc('/track/1/mute', 0.0)
-        return (s1 and s2), f"OSC 脈衝 (發送至「{self.ip}:{self.port}」/track/1/mute)"
+        self.send_signal('/track/1/mute', 14, False)
+        return True, "已發送 Studio One 測試訊號 (OSC + 控制介面訊號)"
 
     def cleanup(self):
         if self._sock:
@@ -346,12 +357,12 @@ class AudioManager:
     def __init__(self, config_manager=None):
         self.config_manager = config_manager
         self.engine_type = 'windows'
-        osc_engine = StudioOneOSCEngine(config_manager)
+        s1_engine = StudioOneOSCEngine(config_manager)
         self.engines = {
             'windows': WindowsAudioEngine(),
             'voicemeeter': VoicemeeterEngine(),
-            'studioone': osc_engine,
-            'studioone_osc': osc_engine
+            'studioone': s1_engine,
+            'studioone_osc': s1_engine
         }
 
     def set_engine(self, engine_type):

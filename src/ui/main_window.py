@@ -9,12 +9,12 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QMessageBox, QApplication, QFileIconProvider,
                              QRadioButton, QButtonGroup, QComboBox,
                              QDialog, QFormLayout, QLineEdit, QListWidget,
-                             QListWidgetItem, QTextEdit, QSpinBox)
+                             QListWidgetItem, QTextEdit, QSpinBox, QGroupBox)
 from PySide6.QtCore import Qt, QThread, Signal, QFileInfo, QTimer
 from PySide6.QtGui import QIcon, QFont, QColor
 from pynput import keyboard, mouse
 
-from src.core.audio_manager import AudioManager, encode_osc_message, decode_osc_message
+from src.core.audio_manager import AudioManager
 from src.core.ptt_worker import PTTWorker
 from src.ui.overlay import MicOffOverlay
 from src.core.config_manager import ConfigManager
@@ -130,45 +130,42 @@ class IconMoverThread(QThread):
         if self.m_listener: self.m_listener.stop()
 
 
-class OSCSignalDialog(QDialog):
+class TrackControlDialog(QDialog):
+    """新手友善的 Studio One 軌道新增/編輯視窗 (完全不出現複雜代碼)"""
     def __init__(self, parent=None, signal_data=None):
         super().__init__(parent)
-        self.setWindowTitle("新增/編輯 Studio One OSC 軌道控制")
-        self.setFixedSize(380, 220)
+        self.setWindowTitle("新增/編輯 Studio One 控制軌道")
+        self.setFixedSize(360, 180)
         self.signal_data = signal_data or {}
         
         layout = QVBoxLayout(self)
         form_layout = QFormLayout()
         
-        self.preset_combo = QComboBox()
-        self.preset_combo.addItem("自訂設定 (Custom Address)")
+        self.track_combo = QComboBox()
         for i in range(1, 17):
-            self.preset_combo.addItem(f"軌道 {i} (/track/{i}/mute)", f"/track/{i}/mute")
-        self.preset_combo.addItem("主輸出總軌 (/main/mute)", "/main/mute")
+            self.track_combo.addItem(f"🎙️ 軌道 {i} ({'麥克風 - 常用' if i==1 else f'軌道 {i}'})", i)
+        self.track_combo.addItem("🔊 總輸出 (Master 音量軌)", "main")
         
-        self.name_input = QLineEdit(self.signal_data.get('name', 'Track 1 麥克風軌道'))
-        self.addr_input = QLineEdit(self.signal_data.get('address', '/track/1/mute'))
+        saved_track = self.signal_data.get('track_num', 1)
+        if saved_track == "main":
+            self.track_combo.setCurrentIndex(16)
+        else:
+            try:
+                idx = int(saved_track) - 1
+                if 0 <= idx < 16:
+                    self.track_combo.setCurrentIndex(idx)
+            except Exception:
+                pass
+                
+        self.name_input = QLineEdit(self.signal_data.get('name', 'Studio One 麥克風 (軌道 1)'))
+        self.track_combo.currentIndexChanged.connect(self._on_track_changed)
         
-        self.type_combo = QComboBox()
-        self.type_combo.addItem("Float 浮點數 (1.0 靜音 / 0.0 開麥 - Studio One 預設)", "float")
-        self.type_combo.addItem("Int 整數 (1 靜音 / 0 開麥)", "int")
-        self.type_combo.addItem("Bool 布林值 (True 靜音 / False 開麥)", "bool")
-        
-        if self.signal_data.get('type') == 'int':
-            self.type_combo.setCurrentIndex(1)
-        elif self.signal_data.get('type') == 'bool':
-            self.type_combo.setCurrentIndex(2)
-            
-        self.preset_combo.currentIndexChanged.connect(self._on_preset_changed)
-        
-        form_layout.addRow("快速範本:", self.preset_combo)
-        form_layout.addRow("功能名稱:", self.name_input)
-        form_layout.addRow("OSC 位址:", self.addr_input)
-        form_layout.addRow("數值類型:", self.type_combo)
+        form_layout.addRow("控制軌道:", self.track_combo)
+        form_layout.addRow("顯示名稱:", self.name_input)
         layout.addLayout(form_layout)
         
         btn_layout = QHBoxLayout()
-        save_btn = QPushButton("儲存")
+        save_btn = QPushButton("確認儲存")
         save_btn.clicked.connect(self.accept)
         cancel_btn = QPushButton("取消")
         cancel_btn.clicked.connect(self.reject)
@@ -177,34 +174,36 @@ class OSCSignalDialog(QDialog):
         btn_layout.addWidget(cancel_btn)
         layout.addLayout(btn_layout)
         
-    def _on_preset_changed(self, idx):
-        if idx > 0:
-            addr = self.preset_combo.currentData()
-            self.addr_input.setText(addr)
-            if "main" in addr:
-                self.name_input.setText("主輸出總軌 (Master)")
-            else:
-                parts = addr.split('/')
-                track_num = parts[2] if len(parts) > 2 else "1"
-                self.name_input.setText(f"Track {track_num} 麥克風軌道")
+    def _on_track_changed(self, idx):
+        val = self.track_combo.currentData()
+        if val == "main":
+            self.name_input.setText("總輸出 (Master)")
+        else:
+            self.name_input.setText(f"Studio One 麥克風 (軌道 {val})")
 
     def get_data(self):
         import uuid
-        name = self.name_input.text().strip() or "未命名 OSC 軌道"
-        addr = self.addr_input.text().strip() or "/track/1/mute"
-        val_type = self.type_combo.currentData()
+        track_val = self.track_combo.currentData()
+        name = self.name_input.text().strip() or f"Studio One 軌道 {track_val}"
         
+        if track_val == "main":
+            addr = "/main/mute"
+            cc = 29
+        else:
+            addr = f"/track/{track_val}/mute"
+            cc = 13 + int(track_val)
+            
         return {
             'id': self.signal_data.get('id', str(uuid.uuid4())),
             'name': name,
+            'track_num': track_val,
             'address': addr,
-            'type': val_type,
-            'mute_val': 1.0 if val_type == 'float' else (1 if val_type == 'int' else True),
-            'unmute_val': 0.0 if val_type == 'float' else (0 if val_type == 'int' else False),
+            'cc_num': cc,
             'enabled': self.signal_data.get('enabled', True)
         }
 
-class OSCSignalWidget(QWidget):
+
+class StudioOneTrackWidget(QWidget):
     def __init__(self, signal_data):
         super().__init__()
         self.signal_data = signal_data
@@ -217,7 +216,7 @@ class OSCSignalWidget(QWidget):
         self.checkbox = QCheckBox()
         self.checkbox.setChecked(signal_data.get('enabled', True))
         
-        lbl_text = f"📡 {signal_data.get('name', '')}  (位址: {signal_data.get('address', '')})"
+        lbl_text = f"🎙️ {signal_data.get('name', 'Studio One 麥克風')}"
         self.name_lbl = QLabel(lbl_text)
         self.name_lbl.setFont(get_font(10, bold=True))
         
@@ -239,181 +238,47 @@ class OSCSignalWidget(QWidget):
         layout.addWidget(self.delete_btn)
 
 
-class OSCConfigDialog(QDialog):
-    def __init__(self, parent=None, config=None, audio_manager=None):
+class StudioOneGuideDialog(QDialog):
+    """超詳細圖文步驟指引"""
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("OSC 網路連線設定")
-        self.setFixedSize(340, 160)
-        self.config = config
-        self.audio_manager = audio_manager
-        
-        layout = QVBoxLayout(self)
-        form_layout = QFormLayout()
-        
-        saved_ip = self.config.get('osc_ip') or "127.0.0.1"
-        saved_port = str(self.config.get('osc_port') or 8000)
-        
-        self.ip_input = QLineEdit(saved_ip)
-        self.port_input = QLineEdit(saved_port)
-        
-        form_layout.addRow("目標主機 (IP):", self.ip_input)
-        form_layout.addRow("發送連接埠 (Port):", self.port_input)
-        layout.addLayout(form_layout)
-        
-        tip_lbl = QLabel("💡 預設為 127.0.0.1:8000 (對應 Studio One 的 OSC 接收埠)")
-        tip_lbl.setStyleSheet("color: #888; font-size: 11px;")
-        layout.addWidget(tip_lbl)
-        
-        btn_layout = QHBoxLayout()
-        save_btn = QPushButton("確認儲存")
-        save_btn.clicked.connect(self._on_save)
-        cancel_btn = QPushButton("取消")
-        cancel_btn.clicked.connect(self.reject)
-        
-        btn_layout.addWidget(save_btn)
-        btn_layout.addWidget(cancel_btn)
-        layout.addLayout(btn_layout)
-        
-    def _on_save(self):
-        ip = self.ip_input.text().strip() or "127.0.0.1"
-        try:
-            port = int(self.port_input.text().strip())
-        except ValueError:
-            QMessageBox.warning(self, "錯誤", "連接埠必須是有效的數字！(例如 8000)")
-            return
-            
-        self.config.set('osc_ip', ip)
-        self.config.set('osc_port', port)
-        if self.audio_manager:
-            engine = self.audio_manager.engines.get('studioone')
-            if engine and hasattr(engine, '_reload_config'):
-                engine._reload_config()
-        self.accept()
-
-
-class OSCListenerWorker(QThread):
-    msg_received = Signal(str, list)
-    status_changed = Signal(str)
-
-    def __init__(self, port=8000):
-        super().__init__()
-        self.port = port
-        self.running = True
-        self.sock = None
-
-    def run(self):
-        try:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.sock.bind(("0.0.0.0", self.port))
-            self.sock.settimeout(0.5)
-            self.status_changed.emit("監聽中 🟢")
-        except Exception as e:
-            self.status_changed.emit(f"綁定失敗 ({e}) 🔴")
-            return
-
-        while self.running:
-            try:
-                data, addr = self.sock.recvfrom(2048)
-                if data:
-                    osc_addr, args = decode_osc_message(data)
-                    self.msg_received.emit(osc_addr, args)
-            except socket.timeout:
-                continue
-            except Exception:
-                break
-
-    def stop(self):
-        self.running = False
-        if self.sock:
-            try:
-                self.sock.close()
-            except Exception:
-                pass
-            self.sock = None
-
-
-class SignalMonitorDialog(QDialog):
-    def __init__(self, parent=None, config=None, audio_manager=None):
-        super().__init__(parent)
-        self.setWindowTitle("🔍 Studio One OSC 即時訊號監聽與模擬測試器")
-        self.resize(580, 440)
-        self.config = config
-        self.audio_manager = audio_manager
-        
-        self.osc_listener = None
+        self.setWindowTitle("📖 Studio One 30 秒快速設定指南")
+        self.resize(460, 360)
         
         layout = QVBoxLayout(self)
         colors = get_theme_colors()
         
-        # Status header
-        status_box = QHBoxLayout()
-        self.osc_status_tag = QLabel("📡 OSC 監聽器: 啟動中...")
-        self.osc_status_tag.setStyleSheet(f"color: {colors.success}; font-weight: bold;")
-        status_box.addWidget(self.osc_status_tag)
-        status_box.addStretch()
-        layout.addLayout(status_box)
+        title_lbl = QLabel("Studio One 設定步驟（只需設定一次）：")
+        title_lbl.setFont(get_font(11, bold=True))
+        layout.addWidget(title_lbl)
         
-        # Log list
-        self.log_list = QListWidget()
-        self.log_list.setFont(QFont("Consolas", 10))
-        self.log_list.setStyleSheet(f"background-color: {colors.bg_card}; color: {colors.text_main}; border: 1px solid {colors.border}; border-radius: 6px;")
-        layout.addWidget(self.log_list)
+        guide_text = QTextEdit()
+        guide_text.setReadOnly(True)
+        guide_text.setStyleSheet(f"background-color: {colors.bg_card}; color: {colors.text_main}; border: 1px solid {colors.border}; border-radius: 6px; padding: 8px; font-size: 13px; line-height: 1.5;")
         
-        # Action triggers
-        btn_layout = QHBoxLayout()
-        
-        btn_unmute = QPushButton("⚡ 模擬發話 (發送開麥 0.0)")
-        btn_unmute.setStyleSheet(f"background-color: {colors.success_bg}; color: white; border-radius: 4px; padding: 6px 12px; font-weight: bold;")
-        btn_unmute.clicked.connect(self._trigger_unmute)
-        
-        btn_mute = QPushButton("🔇 模擬放開 (發送靜音 1.0)")
-        btn_mute.setStyleSheet(f"background-color: {colors.error_bg}; color: white; border-radius: 4px; padding: 6px 12px; font-weight: bold;")
-        btn_mute.clicked.connect(self._trigger_mute)
-        
-        btn_clear = QPushButton("🧹 清除紀錄")
-        btn_clear.clicked.connect(self.log_list.clear)
-        
-        btn_layout.addWidget(btn_unmute)
-        btn_layout.addWidget(btn_mute)
-        btn_layout.addWidget(btn_clear)
-        layout.addLayout(btn_layout)
-        
-        self.start_listeners()
-        self.add_log("系統", "OSC 訊號監聽與模擬測試器已就緒，等待本機通訊訊號...")
+        content = """<b>【步驟 1：在 Studio One 新增裝置】</b><br>
+1. 打開 Studio One，點擊上方選單 <b>「選項 (Options)」➔「外部裝置 (External Devices)」</b>。<br>
+2. 點擊 <b>「新增 (Add)」</b>。<br>
+3. 在左側清單最上方選擇：<b>「🎚️ 新建控制界面 (New Control Surface)」</b>。<br><br>
 
-    def add_log(self, tag, text, color=None):
-        now_str = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        item_text = f"[{now_str}] [{tag}] {text}"
-        item = QListWidgetItem(item_text)
-        if color:
-            item.setForeground(QColor(color))
-        self.log_list.addItem(item)
-        self.log_list.scrollToBottom()
+<b>【步驟 2：設定連接埠】</b><br>
+1. 「接收自 (Receive From)」選擇：<b>loopMIDI Port</b> (或其他可用輸入)。<br>
+2. 「發送到 (Send To)」選擇：<b>無 (None)</b>。<br>
+3. 點擊 <b>確定</b> 儲存。<br><br>
 
-    def start_listeners(self):
-        port = int(self.config.get('osc_port') or 8000)
-        self.osc_listener = OSCListenerWorker(port)
-        self.osc_listener.msg_received.connect(lambda addr, args: self.add_log("OSC 接收", f"{addr} -> {args}", "#6CCB5F"))
-        self.osc_listener.status_changed.connect(lambda s: self.osc_status_tag.setText(f"📡 OSC UDP 監聽 (Port {port}): {s}"))
-        self.osc_listener.start()
-
-    def _trigger_unmute(self):
-        self.add_log("手動觸發", "發送【發話 / 開麥】訊號 (Mute = 0.0)...", "#FFA500")
-        if self.audio_manager:
-            sigs = self.config.get('osc_signals') or [{'address': '/track/1/mute'}]
-            self.audio_manager.set_mute_for_devices(sigs, mute=False)
-
-    def _trigger_mute(self):
-        self.add_log("手動觸發", "發送【放開 / 靜音】訊號 (Mute = 1.0)...", "#FF99A4")
-        if self.audio_manager:
-            sigs = self.config.get('osc_signals') or [{'address': '/track/1/mute'}]
-            self.audio_manager.set_mute_for_devices(sigs, mute=True)
-
-    def closeEvent(self, event):
-        if self.osc_listener:
-            self.osc_listener.stop()
-        super().closeEvent(event)
+<b>【步驟 3：綁定靜音按鈕 (最關鍵)】</b><br>
+1. 在 Studio One 找到您的麥克風軌道（例如第 1 軌）。<br>
+2. 在該軌道的 <b>M (靜音 / Mute)</b> 按鈕上 <b>點右鍵</b> ➔ 選擇 <b>「分配控制 / 分配命令...」</b>。<br>
+3. 此時回到 PTTApp，點擊介面上的 <b>「⚡ 一鍵測試訊號」</b> 按鈕。<br>
+4. Studio One 就會瞬間自動捕捉並完成綁定！大功告成！"""
+        
+        guide_text.setHtml(content)
+        layout.addWidget(guide_text)
+        
+        close_btn = QPushButton("我知道了")
+        close_btn.clicked.connect(self.accept)
+        close_btn.setFixedHeight(34)
+        layout.addWidget(close_btn)
 
 
 class AppItemWidget(QWidget):
@@ -427,16 +292,13 @@ class AppItemWidget(QWidget):
         colors = get_theme_colors()
         self.setStyleSheet(f"background-color: {colors.bg_card}; color: {colors.text_main}; border-radius: 5px;")
 
-        # Checkbox
         self.checkbox = QCheckBox()
         layout.addWidget(self.checkbox)
         
-        # Icon
         self.icon_label = QLabel("🎤")
         self.icon_label.setFont(QFont("Segoe UI Emoji", 14))
         layout.addWidget(self.icon_label)
         
-        # Name
         self.name_label = QLabel(app_info['name'])
         self.name_label.setFont(get_font(10))
         layout.addWidget(self.name_label)
@@ -450,7 +312,7 @@ class AppItemWidget(QWidget):
         layout.addWidget(self.delete_btn)
 
 
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -489,7 +351,7 @@ class MainWindow(QMainWindow):
         self.engine_combo.addItems([
             "Windows 系統麥克風 (預設模式)",
             "Voicemeeter 路由控制",
-            "Studio One (OSC 免驅動模式)"
+            "Studio One 軌道控制"
         ])
         
         saved_engine = self.config.get('engine_type') or 'windows'
@@ -526,53 +388,47 @@ class MainWindow(QMainWindow):
         self.matrix_frame.hide()
         main_layout.addWidget(self.matrix_frame)
         
-        # OSC Controls (Studio One)
-        self.osc_frame = QWidget()
-        osc_layout = QVBoxLayout(self.osc_frame)
-        osc_layout.setContentsMargins(0, 0, 0, 4)
-        osc_layout.setSpacing(4)
+        # Studio One Controls (新手友善介面)
+        self.s1_frame = QWidget()
+        s1_layout = QVBoxLayout(self.s1_frame)
+        s1_layout.setContentsMargins(0, 0, 0, 4)
+        s1_layout.setSpacing(6)
         
-        self.osc_status_lbl = QLabel()
-        self.osc_status_lbl.setFont(get_font(10, bold=True))
-        self.osc_status_lbl.setAlignment(Qt.AlignCenter)
+        self.s1_status_lbl = QLabel("🟢 Studio One 控制模式已就緒")
+        self.s1_status_lbl.setFont(get_font(10, bold=True))
+        self.s1_status_lbl.setAlignment(Qt.AlignCenter)
+        colors = get_theme_colors()
+        self.s1_status_lbl.setStyleSheet(f"color: {colors.success};")
         
-        self.osc_guide_lbl = QLabel("💡 Studio One 設定：選項 ➜ 外部裝置 ➜ 新增 Open Sound Control ➜ 接收埠設為 8000")
-        self.osc_guide_lbl.setFont(get_font(8))
-        self.osc_guide_lbl.setAlignment(Qt.AlignCenter)
-        self.osc_guide_lbl.setStyleSheet("color: #888;")
+        self.s1_btn_widget = QWidget()
+        s1_btn_layout = QHBoxLayout(self.s1_btn_widget)
+        s1_btn_layout.setContentsMargins(0, 0, 0, 0)
+        s1_btn_layout.setSpacing(6)
         
-        self.osc_btn_widget = QWidget()
-        osc_btn_layout = QHBoxLayout(self.osc_btn_widget)
-        osc_btn_layout.setContentsMargins(0, 0, 0, 0)
-        osc_btn_layout.setSpacing(6)
+        self.s1_add_btn = QPushButton("➕ 新增控制軌道")
+        self.s1_add_btn.setFixedHeight(32)
+        self.s1_add_btn.setFont(get_font(10))
+        self.s1_add_btn.clicked.connect(self.add_studioone_track)
         
-        self.osc_add_btn = QPushButton("➕ 新增 OSC 軌道")
-        self.osc_add_btn.setFixedHeight(30)
-        self.osc_add_btn.clicked.connect(self.add_osc_signal)
+        self.s1_test_btn = QPushButton("⚡ 一鍵測試訊號")
+        self.s1_test_btn.setFixedHeight(32)
+        self.s1_test_btn.setFont(get_font(10, bold=True))
+        self.s1_test_btn.clicked.connect(self.send_test_studioone)
         
-        self.osc_test_btn = QPushButton("⚡ 測試訊號")
-        self.osc_test_btn.setFixedHeight(30)
-        self.osc_test_btn.clicked.connect(self.send_test_osc)
+        self.s1_guide_btn = QPushButton("📖 設定教學")
+        self.s1_guide_btn.setFixedHeight(32)
+        self.s1_guide_btn.setFont(get_font(10))
+        self.s1_guide_btn.clicked.connect(self.open_studioone_guide)
         
-        self.osc_monitor_btn = QPushButton("🔍 訊號監聽模擬器")
-        self.osc_monitor_btn.setFixedHeight(30)
-        self.osc_monitor_btn.clicked.connect(self.open_signal_monitor)
+        s1_btn_layout.addWidget(self.s1_add_btn)
+        s1_btn_layout.addWidget(self.s1_test_btn)
+        s1_btn_layout.addWidget(self.s1_guide_btn)
         
-        self.osc_config_btn = QPushButton("⚙️ 連接埠設定")
-        self.osc_config_btn.setFixedHeight(30)
-        self.osc_config_btn.clicked.connect(self.open_osc_config)
+        s1_layout.addWidget(self.s1_status_lbl)
+        s1_layout.addWidget(self.s1_btn_widget)
         
-        osc_btn_layout.addWidget(self.osc_add_btn)
-        osc_btn_layout.addWidget(self.osc_test_btn)
-        osc_btn_layout.addWidget(self.osc_monitor_btn)
-        osc_btn_layout.addWidget(self.osc_config_btn)
-        
-        osc_layout.addWidget(self.osc_status_lbl)
-        osc_layout.addWidget(self.osc_guide_lbl)
-        osc_layout.addWidget(self.osc_btn_widget)
-        
-        self.osc_frame.hide()
-        main_layout.addWidget(self.osc_frame)
+        self.s1_frame.hide()
+        main_layout.addWidget(self.s1_frame)
 
         # Apps List
         self.scroll_area = QScrollArea()
@@ -625,7 +481,6 @@ class MainWindow(QMainWindow):
         self.cancel_hotkey_btn = QPushButton("取消綁定")
         self.cancel_hotkey_btn.clicked.connect(self.cancel_hotkey_listen)
         self.cancel_hotkey_btn.hide()
-        colors = get_theme_colors()
         self.cancel_hotkey_btn.setStyleSheet(f"background-color: {colors.error_bg}; color: white; border: none; padding: 5px;")
         
         self.adjust_icon_btn = QPushButton("調整圖標位置")
@@ -640,7 +495,6 @@ class MainWindow(QMainWindow):
         # Start/Stop
         self.start_btn = QPushButton("▶ 啟動 PTT")
         self.start_btn.setFont(get_font(12, bold=True))
-        colors = get_theme_colors()
         self.start_btn.setStyleSheet(f"background-color: {colors.success_bg}; color: white; border: none;")
         self.start_btn.clicked.connect(self.toggle_ptt)
         self.start_btn.setFixedHeight(40)
@@ -667,47 +521,42 @@ class MainWindow(QMainWindow):
         struct = self.audio_manager.get_structure()
         colors = get_theme_colors()
         
-        if struct['type'] == 'osc':
+        if struct['type'] == 'studioone':
             self.matrix_frame.hide()
             self.refresh_btn.hide()
             self.scroll_area.show()
-            self.osc_frame.show()
+            self.s1_frame.show()
             
-            ip = struct.get('ip', '127.0.0.1')
-            port = struct.get('port', 8000)
-            self.osc_status_lbl.setText(f"🟢 OSC 免驅動模式已就緒 (發送目標: {ip}:{port})")
-            self.osc_status_lbl.setStyleSheet(f"color: {colors.success};")
-            
-            saved_signals = self.config.get('osc_signals')
-            if saved_signals is None:
-                saved_signals = [{
-                    'id': 'osc_track_1',
-                    'name': 'Track 1 麥克風軌道',
+            saved_tracks = self.config.get('s1_tracks')
+            if saved_tracks is None:
+                # Default pre-filled Track 1 (Microphone)
+                saved_tracks = [{
+                    'id': 's1_track_1',
+                    'name': 'Studio One 麥克風 (軌道 1)',
+                    'track_num': 1,
                     'address': '/track/1/mute',
-                    'type': 'float',
-                    'mute_val': 1.0,
-                    'unmute_val': 0.0,
+                    'cc_num': 14,
                     'enabled': True
                 }]
-                self.config.set('osc_signals', saved_signals)
+                self.config.set('s1_tracks', saved_tracks)
                 
-            if not saved_signals:
-                lbl = QLabel("請點選上方的「➕ 新增 OSC 軌道」按鈕開始綁定。")
+            if not saved_tracks:
+                lbl = QLabel("目前尚未新增軌道，請點擊上方的「➕ 新增控制軌道」開始使用。")
                 lbl.setAlignment(Qt.AlignCenter)
                 self.scroll_layout.addWidget(lbl)
                 self.app_widgets.append(lbl)
             else:
-                for sig in saved_signals:
-                    w = OSCSignalWidget(sig)
-                    w.checkbox.stateChanged.connect(self.save_osc_signals)
-                    w.edit_btn.clicked.connect(lambda checked=False, s=sig: self.edit_osc_signal(s))
-                    w.delete_btn.clicked.connect(lambda checked=False, s=sig: self.delete_osc_signal(s))
+                for tr in saved_tracks:
+                    w = StudioOneTrackWidget(tr)
+                    w.checkbox.stateChanged.connect(self.save_studioone_tracks)
+                    w.edit_btn.clicked.connect(lambda checked=False, t=tr: self.edit_studioone_track(t))
+                    w.delete_btn.clicked.connect(lambda checked=False, t=tr: self.delete_studioone_track(t))
                     self.scroll_layout.addWidget(w)
                     self.app_widgets.append(w)
                 
         elif struct['type'] == 'matrix':
             self.refresh_btn.hide()
-            self.osc_frame.hide()
+            self.s1_frame.hide()
             self.scroll_area.show()
             
             status = struct.get('status', 'ready')
@@ -844,7 +693,7 @@ class MainWindow(QMainWindow):
                         
         else:
             self.matrix_frame.hide()
-            self.osc_frame.hide()
+            self.s1_frame.hide()
             self.refresh_btn.show()
             self.scroll_area.show()
             
@@ -865,67 +714,63 @@ class MainWindow(QMainWindow):
                 self.scroll_layout.addWidget(w)
                 self.app_widgets.append(w)
 
-    def save_osc_signals(self):
-        signals = self.config.get('osc_signals', [])
+    def save_studioone_tracks(self):
+        tracks = self.config.get('s1_tracks', [])
         for w in self.app_widgets:
-            if isinstance(w, OSCSignalWidget):
-                sig = w.signal_data
-                sig['enabled'] = w.checkbox.isChecked()
-                for i, s in enumerate(signals):
-                    if s['id'] == sig['id']:
-                        signals[i] = sig
+            if isinstance(w, StudioOneTrackWidget):
+                tr = w.signal_data
+                tr['enabled'] = w.checkbox.isChecked()
+                for i, t in enumerate(tracks):
+                    if t['id'] == tr['id']:
+                        tracks[i] = tr
                         break
-        self.config.set('osc_signals', signals)
+        self.config.set('s1_tracks', tracks)
 
-    def add_osc_signal(self):
-        dialog = OSCSignalDialog(self)
+    def add_studioone_track(self):
+        dialog = TrackControlDialog(self)
         if dialog.exec() == QDialog.Accepted:
-            new_sig = dialog.get_data()
-            signals = self.config.get('osc_signals') or []
-            signals.append(new_sig)
-            self.config.set('osc_signals', signals)
+            new_tr = dialog.get_data()
+            tracks = self.config.get('s1_tracks') or []
+            tracks.append(new_tr)
+            self.config.set('s1_tracks', tracks)
             self.refresh_apps()
 
-    def edit_osc_signal(self, sig):
-        dialog = OSCSignalDialog(self, sig)
+    def edit_studioone_track(self, tr):
+        dialog = TrackControlDialog(self, tr)
         if dialog.exec() == QDialog.Accepted:
-            updated_sig = dialog.get_data()
-            signals = self.config.get('osc_signals') or []
-            for i, s in enumerate(signals):
-                if s['id'] == updated_sig['id']:
-                    signals[i] = updated_sig
+            updated_tr = dialog.get_data()
+            tracks = self.config.get('s1_tracks') or []
+            for i, t in enumerate(tracks):
+                if t['id'] == updated_tr['id']:
+                    tracks[i] = updated_tr
                     break
-            self.config.set('osc_signals', signals)
+            self.config.set('s1_tracks', tracks)
             self.refresh_apps()
 
-    def delete_osc_signal(self, sig):
-        reply = QMessageBox.question(self, "刪除", f"確定要刪除「{sig.get('name')}」嗎？", QMessageBox.Yes | QMessageBox.No)
+    def delete_studioone_track(self, tr):
+        reply = QMessageBox.question(self, "刪除", f"確定要刪除「{tr.get('name')}」嗎？", QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
-            signals = self.config.get('osc_signals') or []
-            signals = [s for s in signals if s['id'] != sig['id']]
-            self.config.set('osc_signals', signals)
+            tracks = self.config.get('s1_tracks') or []
+            tracks = [t for t in tracks if t['id'] != tr['id']]
+            self.config.set('s1_tracks', tracks)
             self.refresh_apps()
 
-    def send_test_osc(self):
+    def send_test_studioone(self):
         success, desc = self.audio_manager.send_test_signal()
         if success:
             QMessageBox.information(
                 self,
                 "發送成功",
-                f"✅ 已成功發送 OSC 測試訊號！\n{desc}\n\n"
-                f"Studio One 若已新增 Open Sound Control 外部裝置並設為接收埠 8000，\n"
-                f"軌道上的靜音 (Mute) 燈號將會閃爍一次。"
+                f"✅ 已成功發送 Studio One 測試控制訊號！\n\n"
+                f"【綁定提示】\n"
+                f"只要在 Studio One 軌道上的 M (靜音) 按鈕按右鍵 ➔ 選擇「分配命令」或「分配控制」，\n"
+                f"然後點擊本按鈕，Studio One 就會自動完成綁定！"
             )
         else:
-            QMessageBox.warning(self, "發送失敗", f"❌ 發送 OSC 測試訊號失敗:\n{desc}")
+            QMessageBox.warning(self, "發送失敗", f"❌ 發送測試訊號失敗:\n{desc}")
 
-    def open_osc_config(self):
-        dialog = OSCConfigDialog(self, self.config, self.audio_manager)
-        if dialog.exec() == QDialog.Accepted:
-            self.refresh_apps()
-
-    def open_signal_monitor(self):
-        dialog = SignalMonitorDialog(self, self.config, self.audio_manager)
+    def open_studioone_guide(self):
+        dialog = StudioOneGuideDialog(self)
         dialog.exec()
 
     def add_matrix_route(self):
@@ -1054,7 +899,7 @@ class MainWindow(QMainWindow):
             for w in self.app_widgets:
                 if isinstance(w, AppItemWidget) and w.checkbox.isChecked():
                     selected_devices.append(w.app_info['id'])
-                elif isinstance(w, OSCSignalWidget) and w.checkbox.isChecked():
+                elif isinstance(w, StudioOneTrackWidget) and w.checkbox.isChecked():
                     selected_devices.append(w.signal_data)
                     
             if not selected_devices:
@@ -1077,12 +922,11 @@ class MainWindow(QMainWindow):
         self.mode_ptt_radio.setEnabled(enabled)
         self.mode_toggle_radio.setEnabled(enabled)
         
-        # OSC toolbar lock
-        if hasattr(self, 'osc_add_btn'):
-            self.osc_add_btn.setEnabled(enabled)
-            self.osc_test_btn.setEnabled(enabled)
-            self.osc_monitor_btn.setEnabled(enabled)
-            self.osc_config_btn.setEnabled(enabled)
+        # Studio One toolbar lock
+        if hasattr(self, 's1_add_btn'):
+            self.s1_add_btn.setEnabled(enabled)
+            self.s1_test_btn.setEnabled(enabled)
+            self.s1_guide_btn.setEnabled(enabled)
         
         # Matrix controls lock
         self.matrix_in_combo.setEnabled(enabled)
@@ -1094,7 +938,7 @@ class MainWindow(QMainWindow):
             if isinstance(w, AppItemWidget):
                 w.checkbox.setEnabled(enabled)
                 w.delete_btn.setEnabled(enabled)
-            elif isinstance(w, OSCSignalWidget):
+            elif isinstance(w, StudioOneTrackWidget):
                 w.checkbox.setEnabled(enabled)
                 w.edit_btn.setEnabled(enabled)
                 w.delete_btn.setEnabled(enabled)

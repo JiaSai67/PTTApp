@@ -16,6 +16,7 @@ class ThemeColors:
             self.success_bg = "#2b7a2b"
             self.error = "#FF99A4"
             self.error_bg = "#a32a2a"
+            self.primary = "#0078D4"
             self.border = "#444444"
         else:
             self.bg_root = "#F9F9F9"
@@ -27,6 +28,7 @@ class ThemeColors:
             self.success_bg = "#107C41"
             self.error = "#C42B1C"
             self.error_bg = "#C42B1C"
+            self.primary = "#0078D4"
             self.border = "#CCCCCC"
 
 def is_dark_theme():
